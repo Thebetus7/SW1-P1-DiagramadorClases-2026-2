@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useRef } from "react";
 import { useRouter } from "next/navigation";
 import {
   Plus,
@@ -16,9 +16,14 @@ import {
   UserCheck,
   UserMinus,
   Check,
+  FileUp,
+  Image as ImageIcon,
 } from "lucide-react";
 import { api } from "@/services/api";
 import { DiagramResponse, User } from "@/types";
+import { importEnterpriseArchitectXmi } from "@/services/xmiImporter";
+import { ImageImportModal } from "@/components/canvas/ImageImportModal";
+import { convertImageToDiagramWithGemini } from "@/services/geminiDiagramService";
 
 export default function DiagramsPage() {
   const router = useRouter();
@@ -32,6 +37,14 @@ export default function DiagramsPage() {
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [newDiagramName, setNewDiagramName] = useState("");
   const [isCreating, setIsCreating] = useState(false);
+
+  // Importar XMI desde Enterprise Architect
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [isImporting, setIsImporting] = useState(false);
+
+  // Importar Imagen con Gemini IA
+  const [showImageImportModal, setShowImageImportModal] = useState(false);
+  const [isProcessingImage, setIsProcessingImage] = useState(false);
 
   // Modal de Gestión de Colaboradores (2 Columnas: Disponibles con [+] y Actuales con [-])
   const [collabModalDiagram, setCollabModalDiagram] = useState<DiagramResponse | null>(null);
@@ -98,6 +111,54 @@ export default function DiagramsPage() {
     }
   };
 
+  const handleFileImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !currentUser) return;
+
+    try {
+      setIsImporting(true);
+      const xmlContent = await file.text();
+
+      // 1. Obtener nombre base del archivo sin extensión
+      const baseName = file.name.replace(/\.[^/.]+$/, "").trim() || "Diagrama";
+
+      // 2. Formatear fecha y hora actual
+      const now = new Date();
+      const year = now.getFullYear();
+      const month = String(now.getMonth() + 1).padStart(2, "0");
+      const day = String(now.getDate()).padStart(2, "0");
+      const hours = String(now.getHours()).padStart(2, "0");
+      const minutes = String(now.getMinutes()).padStart(2, "0");
+      const seconds = String(now.getSeconds()).padStart(2, "0");
+      const formattedDateTime = `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
+
+      // Nombre del nuevo diagrama: nombre del archivo + fecha/hora
+      const finalDiagramName = `${baseName} - ${formattedDateTime}`;
+
+      // 3. Parsear contenido XMI 2.1 de Enterprise Architect
+      const importedData = importEnterpriseArchitectXmi(xmlContent, baseName);
+
+      // 4. Crear diagrama con el lienzo importado en el backend
+      const lienzoJson = JSON.stringify({
+        nodes: importedData.nodes,
+        edges: importedData.edges,
+      });
+
+      const created = await api.createDiagram(finalDiagramName, currentUser.id, lienzoJson);
+
+      // 5. Redirigir directamente al nuevo diagrama importado
+      router.push(`/diagrams/${created.id}`);
+    } catch (err: any) {
+      console.error("Error al importar XMI:", err);
+      alert(err.message || "Error al procesar el archivo XMI de Enterprise Architect");
+    } finally {
+      setIsImporting(false);
+      if (fileInputRef.current) {
+        fileInputRef.current.value = "";
+      }
+    }
+  };
+
   const handleDelete = async (diagramId: number, diagramName: string) => {
     if (!currentUser) return;
     const confirmDelete = window.confirm(
@@ -154,6 +215,47 @@ export default function DiagramsPage() {
     }
   };
 
+  // Handler para importar imagen con Gemini IA
+  const handleImageImport = async (diagramName: string, base64Data: string, mimeType: string) => {
+    if (!currentUser) return;
+
+    try {
+      setIsProcessingImage(true);
+
+      // 1. Llamar a Gemini Vision para convertir la imagen en JSON
+      const result = await convertImageToDiagramWithGemini(base64Data, mimeType);
+
+      // 2. Formatear fecha y hora actual
+      const now = new Date();
+      const year = now.getFullYear();
+      const month = String(now.getMonth() + 1).padStart(2, "0");
+      const day = String(now.getDate()).padStart(2, "0");
+      const hours = String(now.getHours()).padStart(2, "0");
+      const minutes = String(now.getMinutes()).padStart(2, "0");
+      const seconds = String(now.getSeconds()).padStart(2, "0");
+      const formattedDateTime = `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
+
+      const finalDiagramName = `${diagramName} - ${formattedDateTime}`;
+
+      // 3. Crear diagrama con el lienzo generado por IA
+      const lienzoJson = JSON.stringify({
+        nodes: result.nodes,
+        edges: result.edges,
+      });
+
+      const created = await api.createDiagram(finalDiagramName, currentUser.id, lienzoJson);
+
+      // 4. Cerrar modal y redirigir al nuevo diagrama
+      setShowImageImportModal(false);
+      router.push(`/diagrams/${created.id}`);
+    } catch (err: any) {
+      console.error("Error al importar imagen como diagrama:", err);
+      alert(err.message || "Error al procesar la imagen con Gemini IA.");
+    } finally {
+      setIsProcessingImage(false);
+    }
+  };
+
   const filteredDiagrams = diagrams.filter((d) =>
     d.nombre.toLowerCase().includes(searchTerm.toLowerCase())
   );
@@ -190,13 +292,46 @@ export default function DiagramsPage() {
           </p>
         </div>
 
-        <button
-          onClick={() => setShowCreateModal(true)}
-          className="inline-flex items-center gap-2 bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold px-4 py-2 rounded-md transition-colors shadow-xs"
-        >
-          <Plus className="w-4 h-4" />
-          Crear Diagrama
-        </button>
+        {/* Action Buttons */}
+        <div className="flex items-center gap-3">
+          {/* Hidden File Input for XMI Import */}
+          <input
+            type="file"
+            ref={fileInputRef}
+            onChange={handleFileImport}
+            accept=".xmi,.xml"
+            className="hidden"
+          />
+
+          {/* Botón Importar Imagen con IA */}
+          <button
+            onClick={() => setShowImageImportModal(true)}
+            title="Importar diagrama desde una imagen (digital o hecho a mano) usando Gemini IA"
+            className="inline-flex items-center gap-2 bg-white hover:bg-slate-50 text-purple-700 hover:text-purple-800 text-xs font-semibold px-4 py-2 rounded-md border border-purple-300 transition-all shadow-xs hover:scale-[1.02] active:scale-[0.98]"
+          >
+            <ImageIcon className="w-4 h-4 text-purple-600" />
+            Importar Imagen
+          </button>
+
+          {/* Botón Importar XMI de Enterprise Architect */}
+          <button
+            onClick={() => fileInputRef.current?.click()}
+            disabled={isImporting}
+            title="Importar un archivo XMI/XML generado por Enterprise Architect"
+            className="inline-flex items-center gap-2 bg-white hover:bg-slate-50 text-indigo-700 hover:text-indigo-800 text-xs font-semibold px-4 py-2 rounded-md border border-indigo-300 transition-all shadow-xs hover:scale-[1.02] active:scale-[0.98] disabled:opacity-50"
+          >
+            <FileUp className={`w-4 h-4 text-indigo-600 ${isImporting ? "animate-bounce" : ""}`} />
+            {isImporting ? "Importando XMI..." : "Importar XMI de EA"}
+          </button>
+
+          <button
+            onClick={() => setShowCreateModal(true)}
+            className="inline-flex items-center gap-2 bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold px-4 py-2 rounded-md transition-all shadow-xs hover:scale-[1.02] active:scale-[0.98]"
+          >
+            <Plus className="w-4 h-4" />
+            Crear Diagrama
+          </button>
+        </div>
       </div>
 
       {/* Filter and Search Bar */}
@@ -560,6 +695,14 @@ export default function DiagramsPage() {
           </div>
         </div>
       )}
+
+      {/* Modal de Importar Imagen con Gemini IA */}
+      <ImageImportModal
+        isOpen={showImageImportModal}
+        onClose={() => setShowImageImportModal(false)}
+        onImport={handleImageImport}
+        isProcessing={isProcessingImage}
+      />
     </div>
   );
 }

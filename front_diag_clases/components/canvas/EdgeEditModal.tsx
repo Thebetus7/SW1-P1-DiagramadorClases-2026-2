@@ -17,6 +17,17 @@ interface EdgeEditModalProps {
 
 const MULTIPLICITY_PRESETS = ["1", "0..1", "*", "0..*", "1..*", "n..m"];
 
+const COMMON_VERBS = [
+  "contiene",
+  "actualiza",
+  "es",
+  "depende",
+  "administra",
+  "pertenece a",
+  "genera",
+  "posee",
+];
+
 const RELATION_TYPES: { value: UmlRelationType; label: string; symbol: string }[] = [
   { value: "ASSOCIATION", label: "Asociación Simple", symbol: "─────" },
   { value: "DIRECTED_ASSOCIATION", label: "Asociación Dirigida", symbol: "────►" },
@@ -70,7 +81,7 @@ export function EdgeEditModal({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 backdrop-blur-xs animate-in fade-in duration-100">
-      <div className="bg-white rounded-lg border border-slate-300 shadow-2xl w-full max-w-md mx-4 flex flex-col overflow-hidden animate-in zoom-in-95 duration-100">
+      <div className="bg-white rounded-xl border border-slate-300 shadow-2xl w-full max-w-md mx-4 flex flex-col overflow-hidden animate-in zoom-in-95 duration-100">
         {/* Header */}
         <div className="px-5 py-3.5 border-b border-slate-200 flex items-center justify-between bg-slate-50">
           <div>
@@ -97,7 +108,7 @@ export function EdgeEditModal({
             <select
               value={relationType}
               onChange={(e) => setRelationType(e.target.value as UmlRelationType)}
-              className="w-full px-3 py-2 text-xs font-medium border border-slate-300 rounded bg-white focus:outline-none focus:border-slate-800 text-slate-800"
+              className="w-full px-3 py-2 text-xs font-medium border border-slate-300 rounded-lg bg-white focus:outline-none focus:border-slate-800 text-slate-800"
             >
               {RELATION_TYPES.map((rt) => (
                 <option key={rt.value} value={rt.value}>
@@ -107,18 +118,35 @@ export function EdgeEditModal({
             </select>
           </div>
 
-          {/* Nombre / Rol / Estereotipo opcional */}
+          {/* Nombre / Verbo / Rol opcional */}
           <div>
             <label className="block text-xs font-semibold text-slate-700 mb-1">
-              Nombre o Rol de la Relación (Opcional)
+              Nombre o Verbo de la Relación <span className="text-slate-400 font-normal">(Opcional)</span>
             </label>
             <input
               type="text"
               value={name}
               onChange={(e) => setName(e.target.value)}
-              placeholder="Ej. contiene, administra, <<use>>"
-              className="w-full px-3 py-1.5 text-xs border border-slate-300 rounded focus:outline-none focus:border-slate-800"
+              placeholder="Ej. contiene, actualiza, depende, administra..."
+              className="w-full px-3 py-1.5 text-xs border border-slate-300 rounded-lg focus:outline-none focus:border-slate-800 text-slate-800"
             />
+            {/* Chips de sugerencias */}
+            <div className="flex flex-wrap items-center gap-1 mt-1.5">
+              {COMMON_VERBS.map((verb) => (
+                <button
+                  key={verb}
+                  type="button"
+                  onClick={() => setName(verb)}
+                  className={`px-2 py-0.5 text-[10px] rounded border transition-colors ${
+                    name === verb
+                      ? "bg-indigo-600 text-white border-indigo-600 font-medium"
+                      : "bg-slate-50 hover:bg-slate-100 text-slate-600 border-slate-200"
+                  }`}
+                >
+                  {verb}
+                </button>
+              ))}
+            </div>
           </div>
 
           {/* Multiplicidades */}
@@ -138,7 +166,7 @@ export function EdgeEditModal({
                   value={sourceMultiplicity}
                   onChange={(e) => setSourceMultiplicity(e.target.value)}
                   placeholder="ej. 1, 0..1, *"
-                  className="w-full px-2.5 py-1 text-xs font-mono border border-slate-300 rounded focus:outline-none focus:border-slate-800"
+                  className="w-full px-2.5 py-1 text-xs font-mono border border-slate-300 rounded-lg focus:outline-none focus:border-slate-800"
                 />
                 {/* Presets */}
                 <div className="flex flex-wrap gap-1">
@@ -176,7 +204,7 @@ export function EdgeEditModal({
                   value={targetMultiplicity}
                   onChange={(e) => setTargetMultiplicity(e.target.value)}
                   placeholder="ej. 1..*, 0..*"
-                  className="w-full px-2.5 py-1 text-xs font-mono border border-slate-300 rounded focus:outline-none focus:border-slate-800"
+                  className="w-full px-2.5 py-1 text-xs font-mono border border-slate-300 rounded-lg focus:outline-none focus:border-slate-800"
                 />
                 {/* Presets */}
                 <div className="flex flex-wrap gap-1">
@@ -227,14 +255,14 @@ export function EdgeEditModal({
             <button
               type="button"
               onClick={onClose}
-              className="px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-200 rounded border border-slate-300 transition-colors"
+              className="px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-200 rounded-lg border border-slate-300 transition-colors"
             >
               Cancelar
             </button>
             <button
               type="button"
               onClick={handleSave}
-              className="px-4 py-1.5 text-xs font-semibold text-white bg-slate-900 hover:bg-slate-800 rounded transition-colors shadow-xs"
+              className="px-4 py-1.5 text-xs font-semibold text-white bg-slate-900 hover:bg-slate-800 rounded-lg transition-colors shadow-xs"
             >
               Guardar Cambios
             </button>

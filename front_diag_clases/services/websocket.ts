@@ -40,7 +40,13 @@ export class DiagramWebSocketService {
         this.subscribers.forEach((_, diagramId) => {
           this.subscribeStompTopic(diagramId);
         });
-        if (onConnected) onConnected();
+        if (onConnected) {
+          setTimeout(() => {
+            if (this.isConnected && this.client?.connected) {
+              onConnected();
+            }
+          }, 50);
+        }
       },
       onStompError: (frame) => {
         console.warn("STOMP error:", frame.headers["message"]);
@@ -55,23 +61,27 @@ export class DiagramWebSocketService {
   }
 
   private subscribeStompTopic(diagramId: number) {
-    if (!this.client || !this.isConnected) return;
+    if (!this.client || !this.isConnected || !this.client.connected) return;
     if (this.stompSubscriptions.has(diagramId)) return; // Ya existe suscripción activa al tópico STOMP
 
-    const sub = this.client.subscribe(`/topic/diagram/${diagramId}`, (msg: IMessage) => {
-      try {
-        const parsed: WebSocketMessage = JSON.parse(msg.body);
-        // Invocar SIEMPRE el callback más reciente registrado para este diagramId (evita closures desactualizados)
-        const handler = this.subscribers.get(diagramId);
-        if (handler) {
-          handler(parsed);
+    try {
+      const sub = this.client.subscribe(`/topic/diagram/${diagramId}`, (msg: IMessage) => {
+        try {
+          const parsed: WebSocketMessage = JSON.parse(msg.body);
+          // Invocar SIEMPRE el callback más reciente registrado para este diagramId (evita closures desactualizados)
+          const handler = this.subscribers.get(diagramId);
+          if (handler) {
+            handler(parsed);
+          }
+        } catch (e) {
+          console.error("Error al parsear mensaje de WebSocket", e);
         }
-      } catch (e) {
-        console.error("Error al parsear mensaje de WebSocket", e);
-      }
-    });
+      });
 
-    this.stompSubscriptions.set(diagramId, sub);
+      this.stompSubscriptions.set(diagramId, sub);
+    } catch (err) {
+      console.warn("No se pudo suscribir al tópico STOMP:", err);
+    }
   }
 
   public subscribeToDiagram(
@@ -81,17 +91,21 @@ export class DiagramWebSocketService {
     // Actualizar SIEMPRE la función handler más reciente en el mapa
     this.subscribers.set(diagramId, onMessageReceived);
 
-    if (this.client && this.isConnected) {
+    if (this.client && this.isConnected && this.client.connected) {
       this.subscribeStompTopic(diagramId);
     }
   }
 
   public sendMessage(diagramId: number, message: WebSocketMessage) {
-    if (this.client && this.isConnected) {
-      this.client.publish({
-        destination: `/app/diagram/${diagramId}/sync`,
-        body: JSON.stringify(message),
-      });
+    if (this.client && this.isConnected && this.client.connected) {
+      try {
+        this.client.publish({
+          destination: `/app/diagram/${diagramId}/sync`,
+          body: JSON.stringify(message),
+        });
+      } catch (err) {
+        console.warn("Aviso al enviar mensaje por WebSocket:", err);
+      }
     }
   }
 

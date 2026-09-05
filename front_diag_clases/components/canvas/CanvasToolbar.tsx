@@ -1,23 +1,21 @@
 "use client";
 
 import React from "react";
-import { Plus, StickyNote, Download, FileCode, Eye, Wifi } from "lucide-react";
+import { Plus, StickyNote, Download, FileCode, Eye, Wifi, Server, Sparkles } from "lucide-react";
 
 interface CanvasToolbarProps {
   onAddClass: () => void;
   onAddNote: () => void;
-  onExportJson: () => void;
-  onExportXmi: () => void;
   onOpenPreview: () => void;
+  onOpenSpringBootExport: () => void;
   isWsConnected: boolean;
 }
 
 export function CanvasToolbar({
   onAddClass,
   onAddNote,
-  onExportJson,
-  onExportXmi,
   onOpenPreview,
+  onOpenSpringBootExport,
   isWsConnected,
 }: CanvasToolbarProps) {
   return (
@@ -42,38 +40,26 @@ export function CanvasToolbar({
 
       <div className="h-4 w-px bg-slate-200" />
 
-      {/* Botón Previsualizar XMI / JSON */}
+      {/* Botón Preview XMI / JSON */}
       <button
         onClick={onOpenPreview}
-        title="Previsualizar código generado XMI y JSON"
-        className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-semibold text-slate-800 bg-slate-100 hover:bg-slate-200 rounded transition-colors border border-slate-300"
-      >
-        <Eye className="w-3.5 h-3.5 text-slate-700" />
-        Previsualizar (XMI / JSON)
-      </button>
-
-      <div className="h-4 w-px bg-slate-200" />
-
-      {/* Botón Exportar XMI para Enterprise Architect */}
-      <button
-        onClick={onExportXmi}
-        title="Exportar archivo XMI 2.1 compatible con Enterprise Architect v15"
+        title="Previsualizar y exportar código generado XMI y JSON"
         className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-semibold text-indigo-700 bg-indigo-50/70 hover:bg-indigo-100 rounded transition-colors border border-indigo-200"
       >
-        <FileCode className="w-3.5 h-3.5 text-indigo-600" />
-        Exportar XMI
+        <Eye className="w-3.5 h-3.5 text-indigo-600" />
+        Preview (XMI / JSON)
       </button>
 
       <div className="h-4 w-px bg-slate-200" />
 
-      {/* Botón Exportar Respaldo JSON */}
+      {/* Botón Exportar Proyecto Spring Boot */}
       <button
-        onClick={onExportJson}
-        title="Descargar respaldo JSON del lienzo"
-        className="flex items-center gap-1.5 px-2 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-100 rounded transition-colors"
+        onClick={onOpenSpringBootExport}
+        title="Generar y descargar proyecto backend Spring Boot (MVC + PostgreSQL + Endpoints)"
+        className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-bold text-emerald-800 bg-emerald-50 hover:bg-emerald-100 rounded transition-all border border-emerald-300 shadow-xs hover:scale-[1.02] active:scale-[0.98]"
       >
-        <Download className="w-3.5 h-3.5" />
-        JSON
+        <Server className="w-3.5 h-3.5 text-emerald-600" />
+        Exportar Spring Boot (ZIP)
       </button>
 
       <div className="h-4 w-px bg-slate-200" />
@@ -98,3 +84,4 @@ export function CanvasToolbar({
     </div>
   );
 }
+

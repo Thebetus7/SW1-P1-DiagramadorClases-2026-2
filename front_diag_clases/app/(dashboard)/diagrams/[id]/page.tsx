@@ -28,12 +28,15 @@ import { ClassEditModal } from "@/components/canvas/ClassEditModal";
 import { RelationTypePickerModal } from "@/components/canvas/RelationTypePickerModal";
 import { EdgeEditModal } from "@/components/canvas/EdgeEditModal";
 import { CodePreviewModal } from "@/components/canvas/CodePreviewModal";
+import { SpringBootExportModal } from "@/components/canvas/SpringBootExportModal";
 import { CollaboratorsHeader } from "@/components/canvas/CollaboratorsHeader";
 import { CanvasToolbar } from "@/components/canvas/CanvasToolbar";
+import { CanvasAiPromptBar } from "@/components/canvas/CanvasAiPromptBar";
 import { CustomCanvasControls } from "@/components/canvas/CustomCanvasControls";
 import { CollaborativeCursors, RemoteCursor } from "@/components/canvas/CollaborativeCursors";
 import { api } from "@/services/api";
 import { wsService } from "@/services/websocket";
+import { processDiagramWithGemini } from "@/services/geminiDiagramService";
 import {
   downloadEnterpriseArchitectXmi,
   generateEnterpriseArchitectXmi,
@@ -60,6 +63,7 @@ function DiagramEditorContent() {
   const [isSaving, setIsSaving] = useState(false);
   const [isWsConnected, setIsWsConnected] = useState(false);
   const [lastSavedTime, setLastSavedTime] = useState<Date | null>(null);
+  const [isAiLoading, setIsAiLoading] = useState(false);
 
   // Referencia para temporizador de autoguardado debounced
   const autoSaveTimerRef = useRef<NodeJS.Timeout | null>(null);
@@ -107,6 +111,9 @@ function DiagramEditorContent() {
 
   // Modal de previsualización de código (XMI / JSON)
   const [isCodePreviewOpen, setIsCodePreviewOpen] = useState(false);
+
+  // Modal de exportación de proyecto Spring Boot (MVC + PostgreSQL)
+  const [isSpringBootExportOpen, setIsSpringBootExportOpen] = useState(false);
 
   // Generación de códigos en vivo para previsualización
   const xmiCode = useMemo(
@@ -331,7 +338,7 @@ function DiagramEditorContent() {
 
               if (remote.nodes) {
                 setNodes((currentNodes) => {
-                  const remoteMap = new Map(remote.nodes.map((n: Node) => [n.id, n]));
+                  const remoteMap = new Map<string, any>(remote.nodes.map((n: any) => [n.id, n]));
                   const nextNodes = [...currentNodes];
                   let changed = false;
 
@@ -566,32 +573,29 @@ function DiagramEditorContent() {
   );
 
   const canvasContainerRef = useRef<HTMLDivElement>(null);
-  const lastCursorSentRef = useRef<number>(0);
+  const lastCursorEmitRef = useRef<number>(0);
 
   useEffect(() => {
     const container = canvasContainerRef.current;
     if (!container) return;
 
-    const handleGlobalPointerMove = (e: PointerEvent) => {
+    const handleGlobalPointerMove = (e: MouseEvent | PointerEvent) => {
       const activeUser = currentUserRef.current;
       const activeDiagram = diagramRef.current;
       if (!activeUser || !diagramId) return;
-      const now = performance.now();
-      if (now - lastCursorSentRef.current < 30) return;
-      lastCursorSentRef.current = now;
 
-      const flowPos = screenToFlowPosition({
-        x: e.clientX,
-        y: e.clientY,
-      });
+      const flowPos = screenToFlowPosition({ x: e.clientX, y: e.clientY });
 
-      if (isNaN(flowPos.x) || isNaN(flowPos.y)) return;
+      // Throttle de emisión a 40ms (~25 FPS) para no saturar la red
+      const now = Date.now();
+      if (now - lastCursorEmitRef.current < 40) return;
+      lastCursorEmitRef.current = now;
 
-      wsService.sendMessage(diagramId, {
+      wsService.sendMessage(Number(diagramId), {
         type: "CURSOR_MOVE",
-        diagramId,
-        userId: activeUser.id,
-        userName: activeUser.nombre,
+        diagramId: Number(diagramId),
+        userId: Number(activeUser.id),
+        userName: activeUser.nombre || "Usuario",
         userRole:
           Number(activeDiagram?.idCreador) === Number(activeUser.id)
             ? "CREADOR"
@@ -603,11 +607,11 @@ function DiagramEditorContent() {
       });
     };
 
-    container.addEventListener("pointermove", handleGlobalPointerMove, { capture: true });
-    container.addEventListener("mousemove", handleGlobalPointerMove, { capture: true });
+    container.addEventListener("pointermove", handleGlobalPointerMove as any, { capture: true });
+    container.addEventListener("mousemove", handleGlobalPointerMove as any, { capture: true });
     return () => {
-      container.removeEventListener("pointermove", handleGlobalPointerMove, { capture: true });
-      container.removeEventListener("mousemove", handleGlobalPointerMove, { capture: true });
+      container.removeEventListener("pointermove", handleGlobalPointerMove as any, { capture: true });
+      container.removeEventListener("mousemove", handleGlobalPointerMove as any, { capture: true });
     };
   }, [currentUser, diagramId, diagram?.idCreador, screenToFlowPosition]);
 
@@ -637,8 +641,8 @@ function DiagramEditorContent() {
     setIsRelationPickerOpen(true);
   }, []);
 
-  // Confirmar creación de arista con el tipo de relación seleccionado
-  const handleSelectRelationType = (relationType: UmlRelationType) => {
+  // Confirmar creación de arista con el tipo de relación seleccionado y nombre opcional
+  const handleSelectRelationType = (relationType: UmlRelationType, relationName?: string) => {
     if (!pendingConnection) return;
 
     const newEdgeId = `edge-${Date.now()}`;
@@ -650,8 +654,8 @@ function DiagramEditorContent() {
         relationType,
         sourceMultiplicity: "",
         targetMultiplicity: "",
-        name: "",
-      } as UmlEdgeData,
+        name: relationName || "",
+      } as any,
     };
 
     const nextEdges = addEdge(newEdge, edges);
@@ -669,7 +673,7 @@ function DiagramEditorContent() {
       setEdgeSourceClassName((sourceNode?.data as any)?.name || "Clase A");
       setEdgeTargetClassName((targetNode?.data as any)?.name || "Clase B");
       setEditingEdgeId(edge.id);
-      setEditingEdgeData((edge.data as UmlEdgeData) || { relationType: "ASSOCIATION" });
+      setEditingEdgeData(((edge.data as unknown) as UmlEdgeData) || { relationType: "ASSOCIATION" });
       setIsEdgeEditModalOpen(true);
     },
     [nodes]
@@ -854,6 +858,41 @@ function DiagramEditorContent() {
     downloadAnchor.remove();
   };
 
+  // Ejecutar instrucción con Inteligencia Artificial (Gemini 2.5 Flash)
+  const handleExecuteAiPrompt = async (promptText: string) => {
+    setIsAiLoading(true);
+    try {
+      const result = await processDiagramWithGemini(
+        promptText,
+        nodes,
+        edges,
+        diagram?.nombre || "diagrama"
+      );
+
+      // Inyectar callback onEdit en los nodos de clase
+      const nextNodes = result.nodes.map((node) => {
+        if (node.type === "umlClass") {
+          return {
+            ...node,
+            data: {
+              ...node.data,
+              onEdit: handleOpenEditClass,
+            },
+          };
+        }
+        return node;
+      });
+
+      setNodes(nextNodes);
+      setEdges(result.edges);
+      broadcastCanvas(nextNodes, result.edges);
+
+      return result.explanation;
+    } finally {
+      setIsAiLoading(false);
+    }
+  };
+
   // Invitar colaborador
   const handleInviteCollaborator = async (correo: string) => {
     if (!currentUser) return;
@@ -892,7 +931,11 @@ function DiagramEditorContent() {
       />
 
       {/* Contenedor del Lienzo con React Flow */}
-      <div ref={canvasContainerRef} className="flex-1 relative w-full h-full bg-slate-50/50">
+      <div
+        ref={canvasContainerRef}
+        className="flex-1 relative w-full h-full min-h-0 bg-slate-50/50"
+        style={{ width: "100%", height: "100%", minHeight: "calc(100vh - 65px)" }}
+      >
         {/* Marcadores SVG globales para conectores UML 2.5 */}
         <UmlEdgeMarkers />
 
@@ -901,8 +944,7 @@ function DiagramEditorContent() {
           onAddClass={handleAddClass}
           onAddNote={handleAddNote}
           onOpenPreview={() => setIsCodePreviewOpen(true)}
-          onExportXmi={handleExportXmi}
-          onExportJson={handleExportJson}
+          onOpenSpringBootExport={() => setIsSpringBootExportOpen(true)}
           isWsConnected={isWsConnected}
         />
 
@@ -911,6 +953,7 @@ function DiagramEditorContent() {
           edges={edges}
           nodeTypes={nodeTypes}
           edgeTypes={edgeTypes}
+          style={{ width: "100%", height: "100%" }}
           onNodesChange={onNodesChange}
           onEdgesChange={onEdgesChange}
           onConnect={onConnect}
@@ -935,6 +978,12 @@ function DiagramEditorContent() {
 
         {/* Punteros de ratón de colaboradores en tiempo real (Overlay sobre el lienzo) */}
         <CollaborativeCursors cursors={remoteCursors} />
+
+        {/* Barra de Inteligencia Artificial (Gemini 2.5 Flash + Reconocimiento de Voz) */}
+        <CanvasAiPromptBar
+          onExecutePrompt={handleExecuteAiPrompt}
+          isLoading={isAiLoading}
+        />
       </div>
 
       {/* Modal para editar Clases */}
@@ -982,6 +1031,15 @@ function DiagramEditorContent() {
         diagramName={diagram.nombre}
         onDownloadXmi={handleExportXmi}
         onDownloadJson={handleExportJson}
+      />
+
+      {/* Modal para Generar y Exportar Proyecto Spring Boot (MVC + PostgreSQL) */}
+      <SpringBootExportModal
+        isOpen={isSpringBootExportOpen}
+        onClose={() => setIsSpringBootExportOpen(false)}
+        nodes={nodes}
+        edges={edges}
+        diagramName={diagram.nombre}
       />
     </div>
   );

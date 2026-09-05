@@ -193,7 +193,7 @@ export function generateEnterpriseArchitectXmi(
   // 1. Clases UML
   classNodes.forEach((node) => {
     const classId = classIdMap.get(node.id)!;
-    const data = node.data as UmlClassData;
+    const data = (node.data as unknown) as UmlClassData;
     const className = data.name || "ClaseSinNombre";
 
     xml += `      <packagedElement xmi:type="uml:Class" xmi:id="${classId}" name="${escapeXml(className)}" visibility="public">\n`;
@@ -304,7 +304,7 @@ export function generateEnterpriseArchitectXmi(
       const name = data?.name || "";
 
       if (relType === "REALIZATION") {
-        xml += `      <packagedElement xmi:type="uml:Realization" xmi:id="${edgeXmiId}" supplier="${tgtClassId}" client="${srcClassId}"/>\n`;
+        xml += `      <packagedElement xmi:type="uml:Realization" xmi:id="${edgeXmiId}" name="${escapeXml(name)}" supplier="${tgtClassId}" client="${srcClassId}"/>\n`;
         eaConnectors.push({
           id: edgeXmiId,
           sourceId: srcClassId,
@@ -323,7 +323,7 @@ export function generateEnterpriseArchitectXmi(
           lineStyle: "0",
         });
       } else if (relType === "DEPENDENCY") {
-        xml += `      <packagedElement xmi:type="uml:Dependency" xmi:id="${edgeXmiId}" supplier="${tgtClassId}" client="${srcClassId}"/>\n`;
+        xml += `      <packagedElement xmi:type="uml:Dependency" xmi:id="${edgeXmiId}" name="${escapeXml(name)}" supplier="${tgtClassId}" client="${srcClassId}"/>\n`;
         eaConnectors.push({
           id: edgeXmiId,
           sourceId: srcClassId,
@@ -475,7 +475,7 @@ export function generateEnterpriseArchitectXmi(
 
   // 3. Notas UML (Comments) con body y annotatedElement si tienen clases conectadas
   noteNodes.forEach((node) => {
-    const data = node.data as UmlNoteData;
+    const data = (node.data as unknown) as UmlNoteData;
     const noteContent =
       (data as any)?.content ||
       (data as any)?.text ||
@@ -507,7 +507,7 @@ export function generateEnterpriseArchitectXmi(
 
   classNodes.forEach((node) => {
     const classId = classIdMap.get(node.id)!;
-    const data = node.data as UmlClassData;
+    const data = (node.data as unknown) as UmlClassData;
     const className = data.name || "ClaseSinNombre";
 
     const connectedLinks = eaConnectors.filter(
@@ -531,7 +531,7 @@ export function generateEnterpriseArchitectXmi(
   // Notas en la sección elements de EA con su contenido textual
   noteNodes.forEach((node) => {
     const noteId = noteIdMap.get(node.id)!;
-    const data = node.data as UmlNoteData;
+    const data = (node.data as unknown) as UmlNoteData;
     const noteContent =
       (data as any)?.content ||
       (data as any)?.text ||
@@ -596,7 +596,7 @@ export function generateEnterpriseArchitectXmi(
   // Elementos gráficos en el diagrama (Clases)
   classNodes.forEach((node, index) => {
     const classId = classIdMap.get(node.id)!;
-    const data = node.data as UmlClassData;
+    const data = (node.data as unknown) as UmlClassData;
 
     const attrCount = (data.attributes || []).length;
     const methCount = (data.methods || []).length;
