@@ -10,7 +10,7 @@ export interface AiDiagramResult {
 const DEFAULT_GEMINI_API_KEY =
   process.env.NEXT_PUBLIC_GEMINI_API_KEY ||
   process.env.GEMINI_API_KEY ||
-  "AQ.Ab8RN6I34Oy5bagEnGjof29PIZ-z-DfEAFuB3DXHkfc8qTjX0A";
+  "";
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
