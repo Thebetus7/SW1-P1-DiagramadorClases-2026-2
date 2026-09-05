@@ -21,6 +21,7 @@ interface CollaboratorsHeaderProps {
   diagram: DiagramResponse;
   currentUser: User | null;
   isSaving: boolean;
+  lastSavedTime?: Date | null;
   onSave: () => void;
   onInvite: (correo: string) => Promise<void>;
   onRemoveCollaborator?: (userId: number) => Promise<void>;
@@ -30,6 +31,7 @@ export function CollaboratorsHeader({
   diagram,
   currentUser,
   isSaving,
+  lastSavedTime,
   onSave,
   onInvite,
   onRemoveCollaborator,
@@ -170,23 +172,30 @@ export function CollaboratorsHeader({
             Colaboradores
           </button>
 
-          {/* Save Button */}
-          <button
-            onClick={onSave}
-            disabled={isSaving}
-            className="flex items-center gap-1.5 text-xs font-semibold text-white bg-slate-900 hover:bg-slate-800 px-3 py-1.5 rounded shadow-xs transition-colors disabled:opacity-50"
-          >
+          {/* Indicador de Autoguardado en tiempo real */}
+          <div className="flex items-center gap-1.5 text-[11px] font-medium px-2.5 py-1 bg-slate-100/80 border border-slate-200 rounded text-slate-600">
             {isSaving ? (
               <>
-                <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                Guardando...
+                <RefreshCw className="w-3 h-3 animate-spin text-amber-600" />
+                <span className="text-amber-700 font-semibold">Guardando en vivo...</span>
               </>
             ) : (
               <>
-                <Save className="w-3.5 h-3.5" />
-                Guardar
+                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                <span className="text-slate-600 font-medium">Autoguardado activo</span>
               </>
             )}
+          </div>
+
+          {/* Save Button Manual */}
+          <button
+            onClick={onSave}
+            disabled={isSaving}
+            title="Guardar de inmediato manualmente"
+            className="flex items-center gap-1.5 text-xs font-semibold text-white bg-slate-900 hover:bg-slate-800 px-3 py-1.5 rounded shadow-xs transition-colors disabled:opacity-50"
+          >
+            <Save className="w-3.5 h-3.5" />
+            Guardar
           </button>
         </div>
       </header>

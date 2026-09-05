@@ -1,5 +1,12 @@
 import { Node, Edge } from "@xyflow/react";
-import { UmlAttribute, UmlClassData, UmlEdgeData, UmlMethod, UmlNoteData, UmlVisibility } from "@/types";
+import {
+  UmlAttribute,
+  UmlClassData,
+  UmlEdgeData,
+  UmlMethod,
+  UmlNoteData,
+  UmlVisibility,
+} from "@/types";
 
 // Helper para convertir visibilidad simbólica a estándar UML / XMI
 export function mapVisibilityToXmi(v?: UmlVisibility | string): string {
@@ -21,10 +28,19 @@ export function mapVisibilityToXmi(v?: UmlVisibility | string): string {
 export function mapPrimitiveType(typeStr?: string): string {
   if (!typeStr) return "void";
   const clean = typeStr.trim().toLowerCase();
-  if (clean === "string" || clean === "str" || clean === "texto") return "String";
-  if (clean === "int" || clean === "integer" || clean === "entero" || clean === "number") return "Integer";
-  if (clean === "bool" || clean === "boolean" || clean === "booleano") return "Boolean";
-  if (clean === "float" || clean === "double" || clean === "decimal") return "Float";
+  if (clean === "string" || clean === "str" || clean === "texto")
+    return "String";
+  if (
+    clean === "int" ||
+    clean === "integer" ||
+    clean === "entero" ||
+    clean === "number"
+  )
+    return "Integer";
+  if (clean === "bool" || clean === "boolean" || clean === "booleano")
+    return "Boolean";
+  if (clean === "float" || clean === "double" || clean === "decimal")
+    return "Float";
   if (clean === "date" || clean === "datetime") return "Date";
   if (clean === "void") return "void";
   return typeStr.trim();
@@ -44,13 +60,19 @@ export function parseAttributeString(attrStr: string): UmlAttribute {
   return {
     id: `attr-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
     visibility: "+",
-    name: attrStr.replace(/^[+\-#~]\s*/, "").split(":")[0]?.trim() || attrStr,
+    name:
+      attrStr
+        .replace(/^[+\-#~]\s*/, "")
+        .split(":")[0]
+        ?.trim() || attrStr,
     type: attrStr.split(":")[1]?.trim() || "string",
   };
 }
 
 export function parseMethodString(methodStr: string): UmlMethod {
-  const match = methodStr.match(/^([+\-#~])?\s*([a-zA-Z0-9_$]+)\s*\((.*?)\)\s*(?::\s*(.+))?$/);
+  const match = methodStr.match(
+    /^([+\-#~])?\s*([a-zA-Z0-9_$]+)\s*\((.*?)\)\s*(?::\s*(.+))?$/,
+  );
   if (match) {
     return {
       id: `meth-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
@@ -63,7 +85,11 @@ export function parseMethodString(methodStr: string): UmlMethod {
   return {
     id: `meth-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
     visibility: "+",
-    name: methodStr.replace(/^[+\-#~]\s*/, "").split("(")[0]?.trim() || methodStr,
+    name:
+      methodStr
+        .replace(/^[+\-#~]\s*/, "")
+        .split("(")[0]
+        ?.trim() || methodStr,
     parameters: "",
     returnType: methodStr.split(":")[1]?.trim() || "void",
   };
@@ -91,13 +117,13 @@ function generateXmiId(prefix: string, seed: string | number): string {
 
 /**
  * Genera el documento XML / XMI 2.1 conforme a la especificación UML 2.1 / 2.5
- * e incluye las extensiones de Enterprise Architect v15 para renderizar
- * el diagrama visual (Class Diagram) con sus conectores y coordenadas, asociando el owner package adecuadamente.
+ * e incluye las extensiones nativas completas de Enterprise Architect v15
+ * para renderizar asociaciones sólidas, herencias, notas y sus conexiones NoteLink.
  */
 export function generateEnterpriseArchitectXmi(
   diagramName: string,
   nodes: Node[],
-  edges: Edge[]
+  edges: Edge[],
 ): string {
   const cleanDiagramName = diagramName || "Diagrama de Clases del Sistema";
   const packageId = generateXmiId("PKG", "RootPackage");
@@ -108,23 +134,30 @@ export function generateEnterpriseArchitectXmi(
   const classNodes = nodes.filter((n) => n.type === "umlClass");
   const noteNodes = nodes.filter((n) => n.type === "umlNote");
 
-  // Mapas para IDs de clases
+  // Mapas para IDs de clases y notas
   const classIdMap = new Map<string, string>();
   classNodes.forEach((node) => {
     classIdMap.set(node.id, generateXmiId("CLASS", node.id));
   });
 
-  // Mapa para IDs de notas
   const noteIdMap = new Map<string, string>();
   noteNodes.forEach((node) => {
     noteIdMap.set(node.id, generateXmiId("NOTE", node.id));
   });
 
-  // Identificar generalizaciones
+  // Mapear elementos anotados para cada nota (para OMG UML annotatedElement)
+  const noteAnnotatedElements = new Map<string, Set<string>>();
+  noteNodes.forEach((n) => noteAnnotatedElements.set(n.id, new Set()));
+
+  // Identificar generalizaciones entre clases
   const generalizationsBySource = new Map<string, Edge[]>();
   edges.forEach((edge) => {
     const data = edge.data as UmlEdgeData | undefined;
-    if (data?.relationType === "GENERALIZATION") {
+    if (
+      data?.relationType === "GENERALIZATION" &&
+      classIdMap.has(edge.source) &&
+      classIdMap.has(edge.target)
+    ) {
       const list = generalizationsBySource.get(edge.source) || [];
       list.push(edge);
       generalizationsBySource.set(edge.source, list);
@@ -136,10 +169,18 @@ export function generateEnterpriseArchitectXmi(
     id: string;
     sourceId: string;
     targetId: string;
+    sourceName: string;
+    targetName: string;
+    sourceType: "Class" | "Note";
+    targetType: "Class" | "Note";
     eaType: string;
+    linkType: string;
+    direction: string;
     name: string;
     sourceMult: string;
     targetMult: string;
+    aggregationKind: string;
+    lineStyle: string;
     subtype?: string;
   }> = [];
 
@@ -161,6 +202,9 @@ export function generateEnterpriseArchitectXmi(
     const genEdges = generalizationsBySource.get(node.id) || [];
     genEdges.forEach((genEdge) => {
       const targetClassId = classIdMap.get(genEdge.target);
+      const targetNode = classNodes.find((n) => n.id === genEdge.target);
+      const targetClassName = (targetNode?.data as any)?.name || "Superclase";
+
       if (targetClassId) {
         const genId = generateXmiId("GEN", genEdge.id);
         xml += `        <generalization xmi:type="uml:Generalization" xmi:id="${genId}" general="${targetClassId}"/>\n`;
@@ -169,10 +213,18 @@ export function generateEnterpriseArchitectXmi(
           id: genId,
           sourceId: classId,
           targetId: targetClassId,
+          sourceName: className,
+          targetName: targetClassName,
+          sourceType: "Class",
+          targetType: "Class",
           eaType: "Generalization",
+          linkType: "Generalization",
+          direction: "Source -> Destination",
           name: "",
           sourceMult: "",
           targetMult: "",
+          aggregationKind: "none",
+          lineStyle: "0",
         });
       }
     });
@@ -197,7 +249,7 @@ export function generateEnterpriseArchitectXmi(
       const retType = mapPrimitiveType(method.returnType);
 
       xml += `        <ownedOperation xmi:type="uml:Operation" xmi:id="${opId}" name="${escapeXml(method.name)}" visibility="${visibility}">\n`;
-      
+
       // Retorno
       if (retType && retType.toLowerCase() !== "void") {
         const retParamId = generateXmiId("PARAM_RET", `${opId}_return`);
@@ -227,14 +279,25 @@ export function generateEnterpriseArchitectXmi(
     xml += `      </packagedElement>\n`;
   });
 
-  // 2. Relaciones UML a nivel de paquete
+  // 2. Relaciones UML a nivel de paquete (Clase-Clase y Nota-Clase)
   edges.forEach((edge) => {
     const data = edge.data as UmlEdgeData | undefined;
     const relType = data?.relationType || "ASSOCIATION";
-    const srcClassId = classIdMap.get(edge.source);
-    const tgtClassId = classIdMap.get(edge.target);
 
-    if (srcClassId && tgtClassId) {
+    const isSrcClass = classIdMap.has(edge.source);
+    const isTgtClass = classIdMap.has(edge.target);
+    const isSrcNote = noteIdMap.has(edge.source);
+    const isTgtNote = noteIdMap.has(edge.target);
+
+    // CASO A: Relación entre dos Clases
+    if (isSrcClass && isTgtClass) {
+      const srcClassId = classIdMap.get(edge.source)!;
+      const tgtClassId = classIdMap.get(edge.target)!;
+      const srcNode = classNodes.find((n) => n.id === edge.source);
+      const tgtNode = classNodes.find((n) => n.id === edge.target);
+      const srcClassName = (srcNode?.data as any)?.name || "ClaseOrigen";
+      const tgtClassName = (tgtNode?.data as any)?.name || "ClaseDestino";
+
       const edgeXmiId = generateXmiId("REL", edge.id);
       const srcMult = data?.sourceMultiplicity?.trim() || "";
       const tgtMult = data?.targetMultiplicity?.trim() || "";
@@ -246,10 +309,18 @@ export function generateEnterpriseArchitectXmi(
           id: edgeXmiId,
           sourceId: srcClassId,
           targetId: tgtClassId,
+          sourceName: srcClassName,
+          targetName: tgtClassName,
+          sourceType: "Class",
+          targetType: "Class",
           eaType: "Realisation",
+          linkType: "Realisation",
+          direction: "Source -> Destination",
           name,
           sourceMult: srcMult,
           targetMult: tgtMult,
+          aggregationKind: "none",
+          lineStyle: "0",
         });
       } else if (relType === "DEPENDENCY") {
         xml += `      <packagedElement xmi:type="uml:Dependency" xmi:id="${edgeXmiId}" supplier="${tgtClassId}" client="${srcClassId}"/>\n`;
@@ -257,24 +328,40 @@ export function generateEnterpriseArchitectXmi(
           id: edgeXmiId,
           sourceId: srcClassId,
           targetId: tgtClassId,
+          sourceName: srcClassName,
+          targetName: tgtClassName,
+          sourceType: "Class",
+          targetType: "Class",
           eaType: "Dependency",
+          linkType: "Dependency",
+          direction: "Source -> Destination",
           name,
           sourceMult: srcMult,
           targetMult: tgtMult,
+          aggregationKind: "none",
+          lineStyle: "0",
         });
       } else if (relType !== "GENERALIZATION") {
         let aggregationKind = "none";
         let eaType = "Association";
+        let linkType = "Association";
+        let direction = "Unspecified";
         let subtype: string | undefined = undefined;
 
-        if (relType === "AGGREGATION") {
+        if (relType === "DIRECTED_ASSOCIATION") {
+          direction = "Source -> Destination";
+        } else if (relType === "AGGREGATION") {
           aggregationKind = "shared";
           eaType = "Aggregation";
+          linkType = "Aggregation";
           subtype = "Weak";
+          direction = "Source -> Destination";
         } else if (relType === "COMPOSITION") {
           aggregationKind = "composite";
           eaType = "Aggregation";
+          linkType = "Aggregation";
           subtype = "Strong";
+          direction = "Source -> Destination";
         }
 
         const srcEndId = generateXmiId("END_SRC", edge.id);
@@ -294,7 +381,8 @@ export function generateEnterpriseArchitectXmi(
         xml += `        </ownedEnd>\n`;
 
         // Extremo Destino (Target)
-        const isNavigable = relType === "DIRECTED_ASSOCIATION" ? ` isNavigable="true"` : "";
+        const isNavigable =
+          relType === "DIRECTED_ASSOCIATION" ? ` isNavigable="true"` : "";
         xml += `        <ownedEnd xmi:type="uml:Property" xmi:id="${tgtEndId}" type="${tgtClassId}"${isNavigable}>\n`;
         if (tgtMult) {
           const { lower, upper } = parseMultiplicity(tgtMult);
@@ -309,21 +397,100 @@ export function generateEnterpriseArchitectXmi(
           id: edgeXmiId,
           sourceId: srcClassId,
           targetId: tgtClassId,
+          sourceName: srcClassName,
+          targetName: tgtClassName,
+          sourceType: "Class",
+          targetType: "Class",
           eaType,
+          linkType,
+          direction,
           name,
           sourceMult: srcMult,
           targetMult: tgtMult,
+          aggregationKind,
+          lineStyle: "0",
           subtype,
         });
       }
     }
+
+    // CASO B: Conexión entre Nota y Clase (o Clase y Nota)
+    else if ((isSrcNote && isTgtClass) || (isSrcClass && isTgtNote)) {
+      const noteRawId = isSrcNote ? edge.source : edge.target;
+      const classRawId = isSrcClass ? edge.source : edge.target;
+
+      const noteXmiId = noteIdMap.get(noteRawId)!;
+      const classXmiId = classIdMap.get(classRawId)!;
+      const classNode = classNodes.find((n) => n.id === classRawId);
+      const className = (classNode?.data as any)?.name || "Clase";
+
+      // Registrar para el atributo annotatedElement de la nota
+      noteAnnotatedElements.get(noteRawId)?.add(classXmiId);
+
+      const edgeXmiId = generateXmiId("NOTELINK", edge.id);
+      eaConnectors.push({
+        id: edgeXmiId,
+        sourceId: noteXmiId,
+        targetId: classXmiId,
+        sourceName: "Nota",
+        targetName: className,
+        sourceType: "Note",
+        targetType: "Class",
+        eaType: "NoteLink",
+        linkType: "NoteLink",
+        direction: "Unspecified",
+        name: "",
+        sourceMult: "",
+        targetMult: "",
+        aggregationKind: "none",
+        lineStyle: "1", // Línea discontinua característica de los NoteLinks
+      });
+    }
+
+    // CASO C: Conexión entre dos Notas
+    else if (isSrcNote && isTgtNote) {
+      const srcNoteXmiId = noteIdMap.get(edge.source)!;
+      const tgtNoteXmiId = noteIdMap.get(edge.target)!;
+      const edgeXmiId = generateXmiId("NOTELINK", edge.id);
+
+      eaConnectors.push({
+        id: edgeXmiId,
+        sourceId: srcNoteXmiId,
+        targetId: tgtNoteXmiId,
+        sourceName: "Nota",
+        targetName: "Nota",
+        sourceType: "Note",
+        targetType: "Note",
+        eaType: "NoteLink",
+        linkType: "NoteLink",
+        direction: "Unspecified",
+        name: "",
+        sourceMult: "",
+        targetMult: "",
+        aggregationKind: "none",
+        lineStyle: "1",
+      });
+    }
   });
 
-  // 3. Notas UML (Comments)
+  // 3. Notas UML (Comments) con body y annotatedElement si tienen clases conectadas
   noteNodes.forEach((node) => {
     const data = node.data as UmlNoteData;
+    const noteContent =
+      (data as any)?.content ||
+      (data as any)?.text ||
+      (data as any)?.description ||
+      "";
     const noteId = noteIdMap.get(node.id)!;
-    xml += `      <ownedComment xmi:type="uml:Comment" xmi:id="${noteId}" body="${escapeXml(data.content || "")}"/>\n`;
+    const annotatedSet = noteAnnotatedElements.get(node.id);
+    const annotatedAttr =
+      annotatedSet && annotatedSet.size > 0
+        ? ` annotatedElement="${Array.from(annotatedSet).join(" ")}"`
+        : "";
+
+    xml += `      <ownedComment xmi:type="uml:Comment" xmi:id="${noteId}" body="${escapeXml(noteContent)}"${annotatedAttr}>\n`;
+    xml += `        <body>${escapeXml(noteContent)}</body>\n`;
+    xml += `      </ownedComment>\n`;
   });
 
   xml += `    </packagedElement>\n`;
@@ -331,8 +498,8 @@ export function generateEnterpriseArchitectXmi(
 
   // 4. Extensión de Enterprise Architect (Enterprise Architect 15 Diagram & Element Representation)
   xml += `  <xmi:Extension extender="Enterprise Architect" extenderID="3.0">\n`;
-  
-  // Elementos de Modelo extendidos para EA (Package y Classes)
+
+  // Elementos de Modelo extendidos para EA (Package, Classes y Notes con sus links)
   xml += `    <elements>\n`;
   xml += `      <element xmi:idref="${packageId}" xmi:type="uml:Package" name="${escapeXml(cleanDiagramName)}" scope="public">\n`;
   xml += `        <properties isSpecification="false" sType="Package" ntype="0" scope="public"/>\n`;
@@ -341,27 +508,77 @@ export function generateEnterpriseArchitectXmi(
   classNodes.forEach((node) => {
     const classId = classIdMap.get(node.id)!;
     const data = node.data as UmlClassData;
-    xml += `      <element xmi:idref="${classId}" xmi:type="uml:Class" name="${escapeXml(data.name || "ClaseSinNombre")}" scope="public">\n`;
+    const className = data.name || "ClaseSinNombre";
+
+    const connectedLinks = eaConnectors.filter(
+      (c) => c.sourceId === classId || c.targetId === classId,
+    );
+
+    xml += `      <element xmi:idref="${classId}" xmi:type="uml:Class" name="${escapeXml(className)}" scope="public">\n`;
     xml += `        <properties isSpecification="false" sType="Class" ntype="0" scope="public" package="${packageId}"/>\n`;
+
+    if (connectedLinks.length > 0) {
+      xml += `        <links>\n`;
+      connectedLinks.forEach((link) => {
+        xml += `          <${link.linkType} xmi:id="${link.id}" start="${link.sourceId}" end="${link.targetId}"/>\n`;
+      });
+      xml += `        </links>\n`;
+    }
+
     xml += `      </element>\n`;
   });
+
+  // Notas en la sección elements de EA con su contenido textual
+  noteNodes.forEach((node) => {
+    const noteId = noteIdMap.get(node.id)!;
+    const data = node.data as UmlNoteData;
+    const noteContent =
+      (data as any)?.content ||
+      (data as any)?.text ||
+      (data as any)?.description ||
+      "";
+    const connectedLinks = eaConnectors.filter(
+      (c) => c.sourceId === noteId || c.targetId === noteId,
+    );
+
+    xml += `      <element xmi:idref="${noteId}" xmi:type="uml:Note" name="Note" scope="public">\n`;
+    xml += `        <properties isSpecification="false" sType="Note" ntype="0" scope="public" package="${packageId}" documentation="${escapeXml(noteContent)}"/>\n`;
+    xml += `        <documentation value="${escapeXml(noteContent)}"/>\n`;
+    xml += `        <extendedProperties documentation="${escapeXml(noteContent)}"/>\n`;
+
+    if (connectedLinks.length > 0) {
+      xml += `        <links>\n`;
+      connectedLinks.forEach((link) => {
+        xml += `          <${link.linkType} xmi:id="${link.id}" start="${link.sourceId}" end="${link.targetId}"/>\n`;
+      });
+      xml += `        </links>\n`;
+    }
+
+    xml += `      </element>\n`;
+  });
+
   xml += `    </elements>\n`;
 
-  // Lista de conectores extendidos para EA
+  // Lista de conectores extendidos para EA con propiedades completas
   xml += `    <connectors>\n`;
   eaConnectors.forEach((conn) => {
     xml += `      <connector xmi:idref="${conn.id}">\n`;
     xml += `        <source xmi:idref="${conn.sourceId}">\n`;
-    if (conn.sourceMult) {
-      xml += `          <type multiplicity="${escapeXml(conn.sourceMult)}"/>\n`;
-    }
+    xml += `          <model type="${conn.sourceType}" name="${escapeXml(conn.sourceName)}"/>\n`;
+    xml += `          <role visibility="Public" targetScope="instance"/>\n`;
+    xml += `          <type multiplicity="${escapeXml(conn.sourceMult)}" aggregation="${conn.aggregationKind}" containment="Unspecified"/>\n`;
+    xml += `          <modifiers isNavigable="false" isOrdered="false" isUnique="true"/>\n`;
+    xml += `          <style value="Union=0;Derived=0;AllowDuplicates=0;"/>\n`;
     xml += `        </source>\n`;
     xml += `        <target xmi:idref="${conn.targetId}">\n`;
-    if (conn.targetMult) {
-      xml += `          <type multiplicity="${escapeXml(conn.targetMult)}"/>\n`;
-    }
+    xml += `          <model type="${conn.targetType}" name="${escapeXml(conn.targetName)}"/>\n`;
+    xml += `          <role visibility="Public" targetScope="instance"/>\n`;
+    xml += `          <type multiplicity="${escapeXml(conn.targetMult)}" aggregation="none" containment="Unspecified"/>\n`;
+    xml += `          <modifiers isNavigable="false" isOrdered="false" isUnique="true"/>\n`;
+    xml += `          <style value="Union=0;Derived=0;AllowDuplicates=0;"/>\n`;
     xml += `        </target>\n`;
-    xml += `        <properties type="${conn.eaType}"${conn.subtype ? ` subtype="${conn.subtype}"` : ""}/>\n`;
+    xml += `        <properties ea_type="${conn.eaType}" direction="${conn.direction}"${conn.subtype ? ` subtype="${conn.subtype}"` : ""}/>\n`;
+    xml += `        <appearance linemode="3" linecolor="-1" linewidth="0" seqno="0" headStyle="0" lineStyle="${conn.lineStyle}"/>\n`;
     xml += `      </connector>\n`;
   });
   xml += `    </connectors>\n`;
@@ -379,17 +596,27 @@ export function generateEnterpriseArchitectXmi(
   // Elementos gráficos en el diagrama (Clases)
   classNodes.forEach((node, index) => {
     const classId = classIdMap.get(node.id)!;
-    const posX = Math.round(node.position?.x ?? 100 + index * 220);
+    const data = node.data as UmlClassData;
+
+    const attrCount = (data.attributes || []).length;
+    const methCount = (data.methods || []).length;
+    const longestName = (data.name || "").length;
+
+    const width = Math.max(
+      180,
+      Math.min(300, Math.max(longestName * 10 + 60, 190)),
+    );
+    const height = Math.max(110, 50 + attrCount * 20 + methCount * 20);
+
+    const posX = Math.round(node.position?.x ?? 100 + index * 240);
     const posY = Math.round(node.position?.y ?? 100);
-    const width = 180;
-    const height = 130;
 
     const left = posX;
-    const top = -posY;
+    const top = posY;
     const right = posX + width;
-    const bottom = -(posY + height);
+    const bottom = posY + height;
 
-    xml += `          <element geometry="Left=${left};Top=${top};Right=${right};Bottom=${bottom};" subject="${classId}" seq="${index + 1}"/>\n`;
+    xml += `          <element geometry="Left=${left};Top=${top};Right=${right};Bottom=${bottom};" subject="${classId}" seqno="${index + 1}"/>\n`;
   });
 
   // Elementos gráficos en el diagrama (Notas)
@@ -397,17 +624,20 @@ export function generateEnterpriseArchitectXmi(
     const noteId = noteIdMap.get(node.id)!;
     const posX = Math.round(node.position?.x ?? 120);
     const posY = Math.round(node.position?.y ?? 120);
-    const left = posX;
-    const top = -posY;
-    const right = posX + 160;
-    const bottom = -(posY + 90);
+    const width = 180;
+    const height = 90;
 
-    xml += `          <element geometry="Left=${left};Top=${top};Right=${right};Bottom=${bottom};" subject="${noteId}" seq="${classNodes.length + index + 1}"/>\n`;
+    const left = posX;
+    const top = posY;
+    const right = posX + width;
+    const bottom = posY + height;
+
+    xml += `          <element geometry="Left=${left};Top=${top};Right=${right};Bottom=${bottom};" subject="${noteId}" seqno="${classNodes.length + index + 1}"/>\n`;
   });
 
-  // Conectores gráficos en el diagrama
+  // Conectores gráficos en el diagrama (Líneas entre clases y NoteLinks)
   eaConnectors.forEach((conn) => {
-    xml += `          <element geometry="EDGE=1;$Path=;" subject="${conn.id}"/>\n`;
+    xml += `          <element geometry="SX=0;SY=0;EX=0;EY=0;EDGE=1;$Path=;" subject="${conn.id}" style="Mode=3;EOwn=1;SOwn=1;Nav=0;"/>\n`;
   });
 
   xml += `        </elements>\n`;
@@ -452,10 +682,12 @@ function escapeXml(unsafe: string): string {
 export function downloadEnterpriseArchitectXmi(
   diagramName: string,
   nodes: Node[],
-  edges: Edge[]
+  edges: Edge[],
 ): void {
   const xmlContent = generateEnterpriseArchitectXmi(diagramName, nodes, edges);
-  const blob = new Blob([xmlContent], { type: "application/xml;charset=utf-8" });
+  const blob = new Blob([xmlContent], {
+    type: "application/xml;charset=utf-8",
+  });
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = url;

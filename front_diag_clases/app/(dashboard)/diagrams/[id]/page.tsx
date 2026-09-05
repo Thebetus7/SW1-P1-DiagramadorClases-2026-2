@@ -59,6 +59,10 @@ function DiagramEditorContent() {
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [isWsConnected, setIsWsConnected] = useState(false);
+  const [lastSavedTime, setLastSavedTime] = useState<Date | null>(null);
+
+  // Referencia para temporizador de autoguardado debounced
+  const autoSaveTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   // Cursores colaborativos remotos
   const [remoteCursors, setRemoteCursors] = useState<Record<number, RemoteCursor>>({});
@@ -406,9 +410,67 @@ function DiagramEditorContent() {
     };
   }, [currentUser, diagramId, diagram?.idCreador, handleOpenEditClass]);
 
-  // Difundir cambios a colaboradores
+  // Autoguardado debounced en la base de datos (REST PUT)
+  const triggerAutoSave = useCallback(
+    (newNodes: Node[], newEdges: Edge[]) => {
+      if (autoSaveTimerRef.current) {
+        clearTimeout(autoSaveTimerRef.current);
+      }
+
+      autoSaveTimerRef.current = setTimeout(async () => {
+        const activeUser = currentUserRef.current;
+        const activeDiagram = diagramRef.current;
+        if (!activeUser || !activeDiagram || !diagramId) return;
+
+        try {
+          setIsSaving(true);
+          const lienzoPayload = JSON.stringify({
+            nodes: newNodes.map((n) => ({
+              id: n.id,
+              type: n.type,
+              position: n.position,
+              data: {
+                name: (n.data as any)?.name,
+                stereotype: (n.data as any)?.stereotype,
+                attributes: (n.data as any)?.attributes,
+                methods: (n.data as any)?.methods,
+                content: (n.data as any)?.content,
+              },
+            })),
+            edges: newEdges.map((e) => ({
+              id: e.id,
+              source: e.source,
+              target: e.target,
+              sourceHandle: e.sourceHandle,
+              targetHandle: e.targetHandle,
+              type: "umlEdge",
+              data: e.data,
+            })),
+          });
+
+          const updated = await api.updateDiagram(diagramId, {
+            lienzo: lienzoPayload,
+            usuarioId: activeUser.id,
+          });
+
+          setDiagram(updated);
+          setLastSavedTime(new Date());
+        } catch (err) {
+          console.error("Error en autoguardado de diagrama:", err);
+        } finally {
+          setIsSaving(false);
+        }
+      }, 700);
+    },
+    [diagramId]
+  );
+
+  // Difundir cambios a colaboradores y autoguardar en base de datos
   const broadcastCanvas = useCallback(
     (newNodes: Node[], newEdges: Edge[]) => {
+      // Disparar autoguardado en base de datos
+      triggerAutoSave(newNodes, newEdges);
+
       if (!currentUser || isReceivingRemoteUpdate.current) return;
 
       const payload = JSON.stringify({
@@ -444,7 +506,7 @@ function DiagramEditorContent() {
         payload,
       });
     },
-    [currentUser, diagramId, diagram?.idCreador]
+    [currentUser, diagramId, diagram?.idCreador, triggerAutoSave]
   );
 
   // Manejo de cambios de nodos
@@ -823,6 +885,7 @@ function DiagramEditorContent() {
         diagram={diagram}
         currentUser={currentUser}
         isSaving={isSaving}
+        lastSavedTime={lastSavedTime}
         onSave={handleSaveToBackend}
         onInvite={handleInviteCollaborator}
         onRemoveCollaborator={handleRemoveCollaborator}
