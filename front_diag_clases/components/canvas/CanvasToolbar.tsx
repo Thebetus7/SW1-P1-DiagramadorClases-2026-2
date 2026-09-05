@@ -1,12 +1,14 @@
 "use client";
 
 import React from "react";
-import { Plus, StickyNote, Download, Wifi, WifiOff } from "lucide-react";
+import { Plus, StickyNote, Download, FileCode, Eye, Wifi } from "lucide-react";
 
 interface CanvasToolbarProps {
   onAddClass: () => void;
   onAddNote: () => void;
   onExportJson: () => void;
+  onExportXmi: () => void;
+  onOpenPreview: () => void;
   isWsConnected: boolean;
 }
 
@@ -14,6 +16,8 @@ export function CanvasToolbar({
   onAddClass,
   onAddNote,
   onExportJson,
+  onExportXmi,
+  onOpenPreview,
   isWsConnected,
 }: CanvasToolbarProps) {
   return (
@@ -38,13 +42,38 @@ export function CanvasToolbar({
 
       <div className="h-4 w-px bg-slate-200" />
 
+      {/* Botón Previsualizar XMI / JSON */}
+      <button
+        onClick={onOpenPreview}
+        title="Previsualizar código generado XMI y JSON"
+        className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-semibold text-slate-800 bg-slate-100 hover:bg-slate-200 rounded transition-colors border border-slate-300"
+      >
+        <Eye className="w-3.5 h-3.5 text-slate-700" />
+        Previsualizar (XMI / JSON)
+      </button>
+
+      <div className="h-4 w-px bg-slate-200" />
+
+      {/* Botón Exportar XMI para Enterprise Architect */}
+      <button
+        onClick={onExportXmi}
+        title="Exportar archivo XMI 2.1 compatible con Enterprise Architect v15"
+        className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-semibold text-indigo-700 bg-indigo-50/70 hover:bg-indigo-100 rounded transition-colors border border-indigo-200"
+      >
+        <FileCode className="w-3.5 h-3.5 text-indigo-600" />
+        Exportar XMI
+      </button>
+
+      <div className="h-4 w-px bg-slate-200" />
+
+      {/* Botón Exportar Respaldo JSON */}
       <button
         onClick={onExportJson}
-        title="Descargar respaldo JSON"
+        title="Descargar respaldo JSON del lienzo"
         className="flex items-center gap-1.5 px-2 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-100 rounded transition-colors"
       >
         <Download className="w-3.5 h-3.5" />
-        Exportar
+        JSON
       </button>
 
       <div className="h-4 w-px bg-slate-200" />

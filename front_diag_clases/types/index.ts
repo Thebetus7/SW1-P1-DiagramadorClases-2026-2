@@ -28,11 +28,44 @@ export interface DiagramResponse {
   updatedAt: string;
 }
 
+export type UmlVisibility = "+" | "-" | "#" | "~";
+
+export interface UmlAttribute {
+  id: string;
+  visibility: UmlVisibility;
+  name: string;
+  type: string;
+}
+
+export interface UmlMethod {
+  id: string;
+  visibility: UmlVisibility;
+  name: string;
+  parameters: string;
+  returnType: string;
+}
+
+export type UmlRelationType =
+  | "ASSOCIATION"
+  | "DIRECTED_ASSOCIATION"
+  | "GENERALIZATION"
+  | "REALIZATION"
+  | "AGGREGATION"
+  | "COMPOSITION"
+  | "DEPENDENCY";
+
+export interface UmlEdgeData {
+  relationType: UmlRelationType;
+  sourceMultiplicity?: string;
+  targetMultiplicity?: string;
+  name?: string;
+}
+
 export interface UmlClassData {
   name: string;
   stereotype?: string;
-  attributes: string[];
-  methods: string[];
+  attributes: (UmlAttribute | string)[];
+  methods: (UmlMethod | string)[];
 }
 
 export interface UmlNoteData {
@@ -40,7 +73,7 @@ export interface UmlNoteData {
 }
 
 export interface WebSocketMessage {
-  type: "JOIN" | "LEAVE" | "SYNC_CANVAS" | "NODE_CHANGE" | "PRESENCE" | "CURSOR_MOVE";
+  type: "JOIN" | "LEAVE" | "SYNC_CANVAS" | "NODE_CHANGE" | "PRESENCE" | "CURSOR_MOVE" | "NODE_MOVE";
   diagramId: number;
   userId: number;
   userName: string;
@@ -48,3 +81,4 @@ export interface WebSocketMessage {
   payload: string;
   timestamp?: number;
 }
+

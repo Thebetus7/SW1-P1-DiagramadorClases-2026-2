@@ -22,14 +22,30 @@ import "@xyflow/react/dist/style.css";
 
 import { UmlClassNode } from "@/components/canvas/UmlClassNode";
 import { UmlNoteNode } from "@/components/canvas/UmlNoteNode";
+import { UmlEdge } from "@/components/canvas/UmlEdge";
+import { UmlEdgeMarkers } from "@/components/canvas/UmlEdgeMarkers";
 import { ClassEditModal } from "@/components/canvas/ClassEditModal";
+import { RelationTypePickerModal } from "@/components/canvas/RelationTypePickerModal";
+import { EdgeEditModal } from "@/components/canvas/EdgeEditModal";
+import { CodePreviewModal } from "@/components/canvas/CodePreviewModal";
 import { CollaboratorsHeader } from "@/components/canvas/CollaboratorsHeader";
 import { CanvasToolbar } from "@/components/canvas/CanvasToolbar";
 import { CustomCanvasControls } from "@/components/canvas/CustomCanvasControls";
 import { CollaborativeCursors, RemoteCursor } from "@/components/canvas/CollaborativeCursors";
 import { api } from "@/services/api";
 import { wsService } from "@/services/websocket";
-import { DiagramResponse, UmlClassData, User, WebSocketMessage } from "@/types";
+import {
+  downloadEnterpriseArchitectXmi,
+  generateEnterpriseArchitectXmi,
+} from "@/services/xmiExporter";
+import {
+  DiagramResponse,
+  UmlClassData,
+  UmlEdgeData,
+  UmlRelationType,
+  User,
+  WebSocketMessage,
+} from "@/types";
 
 function DiagramEditorContent() {
   const params = useParams();
@@ -43,7 +59,6 @@ function DiagramEditorContent() {
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [isWsConnected, setIsWsConnected] = useState(false);
-  const [isPanMode, setIsPanMode] = useState(false);
 
   // Cursores colaborativos remotos
   const [remoteCursors, setRemoteCursors] = useState<Record<number, RemoteCursor>>({});
@@ -75,14 +90,70 @@ function DiagramEditorContent() {
   const [editingNodeData, setEditingNodeData] = useState<UmlClassData | null>(null);
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
 
+  // Modal selector de tipo de relación (al conectar)
+  const [isRelationPickerOpen, setIsRelationPickerOpen] = useState(false);
+  const [pendingConnection, setPendingConnection] = useState<Connection | null>(null);
+
+  // Modal de edición de arista / relación existente (al hacer clic en arista)
+  const [isEdgeEditModalOpen, setIsEdgeEditModalOpen] = useState(false);
+  const [editingEdgeId, setEditingEdgeId] = useState<string | null>(null);
+  const [editingEdgeData, setEditingEdgeData] = useState<UmlEdgeData | null>(null);
+  const [edgeSourceClassName, setEdgeSourceClassName] = useState("Origen");
+  const [edgeTargetClassName, setEdgeTargetClassName] = useState("Destino");
+
+  // Modal de previsualización de código (XMI / JSON)
+  const [isCodePreviewOpen, setIsCodePreviewOpen] = useState(false);
+
+  // Generación de códigos en vivo para previsualización
+  const xmiCode = useMemo(
+    () => generateEnterpriseArchitectXmi(diagram?.nombre || "diagrama", nodes, edges),
+    [diagram?.nombre, nodes, edges]
+  );
+
+  const jsonCode = useMemo(
+    () =>
+      JSON.stringify(
+        {
+          diagramName: diagram?.nombre,
+          nodes: nodes.map((n) => ({
+            id: n.id,
+            type: n.type,
+            position: n.position,
+            data: n.data,
+          })),
+          edges: edges.map((e) => ({
+            id: e.id,
+            source: e.source,
+            target: e.target,
+            sourceHandle: e.sourceHandle,
+            targetHandle: e.targetHandle,
+            type: e.type,
+            data: e.data,
+          })),
+        },
+        null,
+        2
+      ),
+    [diagram?.nombre, nodes, edges]
+  );
+
   // Evitar bucles infinitos de sincronización WebSocket
   const isReceivingRemoteUpdate = useRef(false);
 
-  // Tipos de nodos registrados para React Flow
+  // Tipos de nodos y aristas registrados para React Flow
   const nodeTypes = useMemo(
     () => ({
       umlClass: UmlClassNode,
       umlNote: UmlNoteNode,
+    }),
+    []
+  );
+
+  const edgeTypes = useMemo(
+    () => ({
+      umlEdge: UmlEdge,
+      smoothstep: UmlEdge,
+      default: UmlEdge,
     }),
     []
   );
@@ -94,7 +165,7 @@ function DiagramEditorContent() {
     setIsEditModalOpen(true);
   }, []);
 
-  // Limpieza periódica de cursores inactivos (más de 5 segundos sin actualización)
+  // Limpieza periódica de cursores inactivos
   useEffect(() => {
     const timer = setInterval(() => {
       const now = Date.now();
@@ -139,7 +210,6 @@ function DiagramEditorContent() {
         const data = await api.getDiagramById(diagramId, currentUser.id);
         setDiagram(data);
 
-        // Parsear lienzo inicial
         if (data.lienzo) {
           try {
             const parsed = JSON.parse(data.lienzo);
@@ -150,8 +220,20 @@ function DiagramEditorContent() {
                 onEdit: handleOpenEditClass,
               },
             }));
+
+            const loadedEdges = (parsed.edges || []).map((edge: Edge) => ({
+              ...edge,
+              type: "umlEdge",
+              data: {
+                relationType: (edge.data as any)?.relationType || "ASSOCIATION",
+                sourceMultiplicity: (edge.data as any)?.sourceMultiplicity || "",
+                targetMultiplicity: (edge.data as any)?.targetMultiplicity || "",
+                name: (edge.data as any)?.name || "",
+              },
+            }));
+
             setNodes(loadedNodes);
-            setEdges(parsed.edges || []);
+            setEdges(loadedEdges);
           } catch (e) {
             console.error("Error al parsear el lienzo del diagrama:", e);
           }
@@ -173,7 +255,6 @@ function DiagramEditorContent() {
     wsService.connect(
       () => {
         setIsWsConnected(true);
-        // Notificar presencia al ingresar
         wsService.sendMessage(diagramId, {
           type: "JOIN",
           diagramId,
@@ -183,15 +264,12 @@ function DiagramEditorContent() {
           payload: "",
         });
 
-        // Suscribirse al canal del diagrama
         wsService.subscribeToDiagram(diagramId, (msg: WebSocketMessage) => {
           const activeUser = currentUserRef.current;
           if (!activeUser) return;
 
-          // Ignorar nuestros propios ecos convirtiendo a número para evitar discrepancia de tipo string/number
           if (Number(msg.userId) === Number(activeUser.id)) return;
 
-          // Sincronización del puntero del mouse en tiempo real
           if (msg.type === "CURSOR_MOVE" && msg.payload) {
             try {
               const { x, y } = JSON.parse(msg.payload);
@@ -213,7 +291,6 @@ function DiagramEditorContent() {
             return;
           }
 
-          // Salida de colaborador
           if (msg.type === "LEAVE") {
             setRemoteCursors((prev) => {
               const next = { ...prev };
@@ -223,11 +300,9 @@ function DiagramEditorContent() {
             return;
           }
 
-          // Movimiento de nodo (arrastre suave)
           if (msg.type === "NODE_MOVE" && msg.payload) {
             try {
               const { id, position } = JSON.parse(msg.payload);
-              // Si el usuario local está arrastrando este mismo nodo, no sobreescribir su posición local
               if (draggingNodeIdRef.current === id) return;
 
               isReceivingRemoteUpdate.current = true;
@@ -245,28 +320,27 @@ function DiagramEditorContent() {
             return;
           }
 
-          // Sincronización completa del lienzo
           if (msg.type === "SYNC_CANVAS" && msg.payload) {
             try {
               isReceivingRemoteUpdate.current = true;
               const remote = JSON.parse(msg.payload);
-              
+
               if (remote.nodes) {
                 setNodes((currentNodes) => {
                   const remoteMap = new Map(remote.nodes.map((n: Node) => [n.id, n]));
                   const nextNodes = [...currentNodes];
                   let changed = false;
 
-                  // Actualizar nodos existentes
                   for (let i = 0; i < nextNodes.length; i++) {
                     const existing = nextNodes[i];
                     const remoteNode = remoteMap.get(existing.id);
                     if (remoteNode) {
-                      // Verificar si hubo cambios reales para evitar re-renders innecesarios
-                      const posChanged = existing.position.x !== remoteNode.position.x || existing.position.y !== remoteNode.position.y;
+                      const posChanged =
+                        existing.position.x !== remoteNode.position.x ||
+                        existing.position.y !== remoteNode.position.y;
                       const dataStr = JSON.stringify(existing.data);
                       const remoteDataStr = JSON.stringify(remoteNode.data);
-                      
+
                       if (posChanged || dataStr !== remoteDataStr) {
                         nextNodes[i] = {
                           ...existing,
@@ -279,12 +353,10 @@ function DiagramEditorContent() {
                         };
                         changed = true;
                       }
-                      // Eliminar del mapa para saber cuáles son nuevos
                       remoteMap.delete(existing.id);
                     }
                   }
 
-                  // Añadir nodos nuevos que llegaron remotamente
                   remoteMap.forEach((remoteNode) => {
                     nextNodes.push({
                       ...remoteNode,
@@ -296,7 +368,6 @@ function DiagramEditorContent() {
                     changed = true;
                   });
 
-                  // Eliminar nodos que ya no están en la lista remota
                   const finalNodes = nextNodes.filter((n) => {
                     const keep = remote.nodes.some((rn: Node) => rn.id === n.id);
                     if (!keep) changed = true;
@@ -306,11 +377,16 @@ function DiagramEditorContent() {
                   return changed ? finalNodes : currentNodes;
                 });
               }
-              
+
               if (remote.edges) {
-                setEdges(remote.edges);
+                setEdges(
+                  remote.edges.map((e: Edge) => ({
+                    ...e,
+                    type: "umlEdge",
+                  }))
+                );
               }
-              
+
               setTimeout(() => {
                 isReceivingRemoteUpdate.current = false;
               }, 60);
@@ -348,7 +424,15 @@ function DiagramEditorContent() {
             content: (n.data as any)?.content,
           },
         })),
-        edges: newEdges,
+        edges: newEdges.map((e) => ({
+          id: e.id,
+          source: e.source,
+          target: e.target,
+          sourceHandle: e.sourceHandle,
+          targetHandle: e.targetHandle,
+          type: "umlEdge",
+          data: e.data,
+        })),
       });
 
       wsService.sendMessage(diagramId, {
@@ -363,12 +447,11 @@ function DiagramEditorContent() {
     [currentUser, diagramId, diagram?.idCreador]
   );
 
-  // Manejo de cambios de nodos (selección, dimensiones, remoción)
+  // Manejo de cambios de nodos
   const onNodesChange = useCallback(
     (changes: NodeChange[]) => {
       setNodes((nds) => applyNodeChanges(changes, nds));
 
-      // Si se eliminó un nodo localmente, difundir cambio estructural
       const hasRemoval = changes.some((c) => c.type === "remove");
       if (hasRemoval) {
         setTimeout(() => {
@@ -379,14 +462,12 @@ function DiagramEditorContent() {
     [broadcastCanvas]
   );
 
-  // Referencia para rastrear si el usuario local está arrastrando un nodo
   const draggingNodeIdRef = useRef<string | null>(null);
 
   const onNodeDragStart: OnNodeDrag = useCallback((_event, node) => {
     draggingNodeIdRef.current = node.id;
   }, []);
 
-  // Sincronización en vivo del arrastre de nodos
   const lastNodeDragBroadcastRef = useRef<number>(0);
   const onNodeDrag: OnNodeDrag = useCallback(
     (_event, node) => {
@@ -395,8 +476,7 @@ function DiagramEditorContent() {
       const now = performance.now();
       if (now - lastNodeDragBroadcastRef.current > 35) {
         lastNodeDragBroadcastRef.current = now;
-        
-        // Emitir únicamente el nodo que se mueve para no sobreescribir el lienzo entero
+
         wsService.sendMessage(diagramId, {
           type: "NODE_MOVE",
           diagramId,
@@ -413,11 +493,9 @@ function DiagramEditorContent() {
     [currentUser, diagramId, diagram?.idCreador]
   );
 
-  // Sincronización definitiva al soltar el nodo arrastrado
   const onNodeDragStop: OnNodeDrag = useCallback(
     (_event, _node) => {
       draggingNodeIdRef.current = null;
-      // Usar un setTimeout para asegurar que el estado de React Flow se haya asentado
       setTimeout(() => {
         broadcastCanvas(nodesRef.current, edgesRef.current);
       }, 50);
@@ -425,10 +503,7 @@ function DiagramEditorContent() {
     [broadcastCanvas]
   );
 
-  // Ref del contenedor del lienzo para captura global de puntero
   const canvasContainerRef = useRef<HTMLDivElement>(null);
-
-  // Emisión continua del movimiento del cursor local sobre TODO el lienzo (incluso durante arrastre)
   const lastCursorSentRef = useRef<number>(0);
 
   useEffect(() => {
@@ -440,7 +515,6 @@ function DiagramEditorContent() {
       const activeDiagram = diagramRef.current;
       if (!activeUser || !diagramId) return;
       const now = performance.now();
-      // Throttle de 30ms (~33 fps) para fluidez absoluta sin saturar WebSocket
       if (now - lastCursorSentRef.current < 30) return;
       lastCursorSentRef.current = now;
 
@@ -456,7 +530,10 @@ function DiagramEditorContent() {
         diagramId,
         userId: activeUser.id,
         userName: activeUser.nombre,
-        userRole: Number(activeDiagram?.idCreador) === Number(activeUser.id) ? "CREADOR" : "COLABORADOR",
+        userRole:
+          Number(activeDiagram?.idCreador) === Number(activeUser.id)
+            ? "CREADOR"
+            : "COLABORADOR",
         payload: JSON.stringify({
           x: Math.round(flowPos.x),
           y: Math.round(flowPos.y),
@@ -464,7 +541,6 @@ function DiagramEditorContent() {
       });
     };
 
-    // Escuchar pointermove y mousemove en fase CAPTURE para interceptar todo movimiento
     container.addEventListener("pointermove", handleGlobalPointerMove, { capture: true });
     container.addEventListener("mousemove", handleGlobalPointerMove, { capture: true });
     return () => {
@@ -478,31 +554,91 @@ function DiagramEditorContent() {
     (changes: EdgeChange[]) => {
       setEdges((eds) => {
         const next = applyEdgeChanges(changes, eds);
-        broadcastCanvas(nodesRef.current, next);
+        const hasRemoval = changes.some((c) => c.type === "remove");
+        if (hasRemoval) {
+          setTimeout(() => {
+            broadcastCanvas(nodesRef.current, next);
+          }, 0);
+        }
         return next;
       });
     },
     [broadcastCanvas]
   );
 
-  // Conectar dos nodos (crear arista UML)
-  const onConnect = useCallback(
-    (params: Connection) => {
-      setEdges((eds) => {
-        const next = addEdge(
-          {
-            ...params,
-            type: "smoothstep",
-            style: { stroke: "#475569", strokeWidth: 1.5 },
-          },
-          eds
-        );
-        broadcastCanvas(nodes, next);
-        return next;
-      });
+  // Interceptar la conexión para desplegar el selector de tipo de relación UML
+  const onConnect = useCallback((connection: Connection) => {
+    if (connection.source === connection.target && connection.sourceHandle === connection.targetHandle) {
+      return;
+    }
+    setPendingConnection(connection);
+    setIsRelationPickerOpen(true);
+  }, []);
+
+  // Confirmar creación de arista con el tipo de relación seleccionado
+  const handleSelectRelationType = (relationType: UmlRelationType) => {
+    if (!pendingConnection) return;
+
+    const newEdgeId = `edge-${Date.now()}`;
+    const newEdge: Edge = {
+      ...pendingConnection,
+      id: newEdgeId,
+      type: "umlEdge",
+      data: {
+        relationType,
+        sourceMultiplicity: "",
+        targetMultiplicity: "",
+        name: "",
+      } as UmlEdgeData,
+    };
+
+    const nextEdges = addEdge(newEdge, edges);
+    setEdges(nextEdges);
+    broadcastCanvas(nodes, nextEdges);
+    setPendingConnection(null);
+  };
+
+  // Abrir modal de edición al hacer clic en una arista existente
+  const onEdgeClick = useCallback(
+    (_event: React.MouseEvent, edge: Edge) => {
+      const sourceNode = nodes.find((n) => n.id === edge.source);
+      const targetNode = nodes.find((n) => n.id === edge.target);
+
+      setEdgeSourceClassName((sourceNode?.data as any)?.name || "Clase A");
+      setEdgeTargetClassName((targetNode?.data as any)?.name || "Clase B");
+      setEditingEdgeId(edge.id);
+      setEditingEdgeData((edge.data as UmlEdgeData) || { relationType: "ASSOCIATION" });
+      setIsEdgeEditModalOpen(true);
     },
-    [nodes, broadcastCanvas]
+    [nodes]
   );
+
+  // Guardar cambios de edición de la relación
+  const handleSaveEdgeEdit = (edgeId: string, updatedData: UmlEdgeData) => {
+    const nextEdges = edges.map((edge) => {
+      if (edge.id === edgeId) {
+        return {
+          ...edge,
+          type: "umlEdge",
+          data: {
+            ...edge.data,
+            ...updatedData,
+          },
+        };
+      }
+      return edge;
+    });
+
+    setEdges(nextEdges);
+    broadcastCanvas(nodes, nextEdges);
+  };
+
+  // Eliminar arista desde el modal
+  const handleDeleteEdge = (edgeId: string) => {
+    const nextEdges = edges.filter((e) => e.id !== edgeId);
+    setEdges(nextEdges);
+    broadcastCanvas(nodes, nextEdges);
+  };
 
   // Añadir una nueva Clase UML
   const handleAddClass = () => {
@@ -517,8 +653,13 @@ function DiagramEditorContent() {
       data: {
         name: `NuevaClase_${nodes.length + 1}`,
         stereotype: "",
-        attributes: ["- id: int", "+ nombre: string"],
-        methods: ["+ operacion(): void"],
+        attributes: [
+          { id: `attr-${Date.now()}-1`, visibility: "-", name: "id", type: "int" },
+          { id: `attr-${Date.now()}-2`, visibility: "+", name: "nombre", type: "string" },
+        ],
+        methods: [
+          { id: `meth-${Date.now()}-1`, visibility: "+", name: "operacion", parameters: "", returnType: "void" },
+        ],
         onEdit: handleOpenEditClass,
       },
     };
@@ -599,7 +740,15 @@ function DiagramEditorContent() {
             content: (n.data as any)?.content,
           },
         })),
-        edges,
+        edges: edges.map((e) => ({
+          id: e.id,
+          source: e.source,
+          target: e.target,
+          sourceHandle: e.sourceHandle,
+          targetHandle: e.targetHandle,
+          type: "umlEdge",
+          data: e.data,
+        })),
       });
 
       const updated = await api.updateDiagram(diagramId, {
@@ -613,6 +762,11 @@ function DiagramEditorContent() {
     } finally {
       setIsSaving(false);
     }
+  };
+
+  // Exportar XMI para Enterprise Architect v15
+  const handleExportXmi = () => {
+    downloadEnterpriseArchitectXmi(diagram?.nombre || "diagrama", nodes, edges);
   };
 
   // Exportar JSON descargable
@@ -676,10 +830,15 @@ function DiagramEditorContent() {
 
       {/* Contenedor del Lienzo con React Flow */}
       <div ref={canvasContainerRef} className="flex-1 relative w-full h-full bg-slate-50/50">
+        {/* Marcadores SVG globales para conectores UML 2.5 */}
+        <UmlEdgeMarkers />
+
         {/* Barra de herramientas flotante */}
         <CanvasToolbar
           onAddClass={handleAddClass}
           onAddNote={handleAddNote}
+          onOpenPreview={() => setIsCodePreviewOpen(true)}
+          onExportXmi={handleExportXmi}
           onExportJson={handleExportJson}
           isWsConnected={isWsConnected}
         />
@@ -688,9 +847,11 @@ function DiagramEditorContent() {
           nodes={nodes}
           edges={edges}
           nodeTypes={nodeTypes}
+          edgeTypes={edgeTypes}
           onNodesChange={onNodesChange}
           onEdgesChange={onEdgesChange}
           onConnect={onConnect}
+          onEdgeClick={onEdgeClick}
           onNodeDragStart={onNodeDragStart}
           onNodeDrag={onNodeDrag}
           onNodeDragStop={onNodeDragStop}
@@ -700,8 +861,7 @@ function DiagramEditorContent() {
           panOnDrag={[1, 2]}
           nodesDraggable={true}
           defaultEdgeOptions={{
-            type: "smoothstep",
-            style: { stroke: "#475569", strokeWidth: 1.5 },
+            type: "umlEdge",
           }}
           className="bg-slate-50"
         >
@@ -722,6 +882,43 @@ function DiagramEditorContent() {
         onClose={() => setIsEditModalOpen(false)}
         onSave={handleSaveClassEdit}
         onDeleteNode={handleDeleteNode}
+      />
+
+      {/* Modal selector rápido de tipo de relación (al conectar) */}
+      <RelationTypePickerModal
+        isOpen={isRelationPickerOpen}
+        onClose={() => {
+          setIsRelationPickerOpen(false);
+          setPendingConnection(null);
+        }}
+        onSelect={handleSelectRelationType}
+      />
+
+      {/* Modal para editar relación existente y multiplicidad (al hacer clic en arista) */}
+      <EdgeEditModal
+        isOpen={isEdgeEditModalOpen}
+        edgeId={editingEdgeId}
+        initialData={editingEdgeData}
+        sourceClassName={edgeSourceClassName}
+        targetClassName={edgeTargetClassName}
+        onClose={() => {
+          setIsEdgeEditModalOpen(false);
+          setEditingEdgeId(null);
+          setEditingEdgeData(null);
+        }}
+        onSave={handleSaveEdgeEdit}
+        onDeleteEdge={handleDeleteEdge}
+      />
+
+      {/* Modal para Previsualizar Código (XMI / JSON) */}
+      <CodePreviewModal
+        isOpen={isCodePreviewOpen}
+        onClose={() => setIsCodePreviewOpen(false)}
+        xmiCode={xmiCode}
+        jsonCode={jsonCode}
+        diagramName={diagram.nombre}
+        onDownloadXmi={handleExportXmi}
+        onDownloadJson={handleExportJson}
       />
     </div>
   );

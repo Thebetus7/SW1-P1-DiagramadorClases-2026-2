@@ -4,6 +4,7 @@ import React, { memo } from "react";
 import { Handle, Position, NodeProps } from "@xyflow/react";
 import { Edit2 } from "lucide-react";
 import { UmlClassData } from "@/types";
+import { normalizeAttribute, normalizeMethod } from "@/services/xmiExporter";
 
 function UmlClassNodeComponent({ id, data, selected }: NodeProps) {
   const classData = data as unknown as UmlClassData;
@@ -15,9 +16,12 @@ function UmlClassNodeComponent({ id, data, selected }: NodeProps) {
     }
   };
 
+  const attributes = (classData.attributes || []).map(normalizeAttribute);
+  const methods = (classData.methods || []).map(normalizeMethod);
+
   return (
     <div
-      className={`bg-white rounded-md border min-w-[200px] max-w-[280px] shadow-sm text-xs font-mono transition-shadow select-none ${
+      className={`bg-white rounded-md border min-w-[210px] max-w-[300px] shadow-sm text-xs font-mono transition-shadow select-none ${
         selected ? "border-slate-800 ring-2 ring-slate-800/20 shadow-md" : "border-slate-300"
       }`}
     >
@@ -98,10 +102,13 @@ function UmlClassNodeComponent({ id, data, selected }: NodeProps) {
 
       {/* Compartimento de Atributos */}
       <div className="p-2 space-y-1 border-b border-slate-200 bg-white min-h-[32px]">
-        {classData.attributes && classData.attributes.length > 0 ? (
-          classData.attributes.map((attr, idx) => (
-            <div key={idx} className="text-slate-700 text-[11px] truncate leading-tight">
-              {attr}
+        {attributes.length > 0 ? (
+          attributes.map((attr, idx) => (
+            <div key={attr.id || idx} className="text-slate-700 text-[11px] truncate leading-tight flex items-center gap-1">
+              <span className="font-bold text-slate-800 w-3 shrink-0 text-center">{attr.visibility}</span>
+              <span className="font-medium text-slate-900">{attr.name}</span>
+              <span className="text-slate-400">:</span>
+              <span className="text-slate-600 italic">{attr.type}</span>
             </div>
           ))
         ) : (
@@ -111,10 +118,14 @@ function UmlClassNodeComponent({ id, data, selected }: NodeProps) {
 
       {/* Compartimento de Métodos / Operaciones */}
       <div className="p-2 space-y-1 bg-white rounded-b-md min-h-[32px]">
-        {classData.methods && classData.methods.length > 0 ? (
-          classData.methods.map((method, idx) => (
-            <div key={idx} className="text-slate-700 text-[11px] truncate leading-tight">
-              {method}
+        {methods.length > 0 ? (
+          methods.map((method, idx) => (
+            <div key={method.id || idx} className="text-slate-700 text-[11px] truncate leading-tight flex items-center gap-1">
+              <span className="font-bold text-slate-800 w-3 shrink-0 text-center">{method.visibility}</span>
+              <span className="font-medium text-slate-900">{method.name}</span>
+              <span className="text-slate-500 font-normal">({method.parameters || ""})</span>
+              <span className="text-slate-400">:</span>
+              <span className="text-slate-600 italic">{method.returnType || "void"}</span>
             </div>
           ))
         ) : (
