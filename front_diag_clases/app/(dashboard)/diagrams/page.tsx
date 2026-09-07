@@ -22,6 +22,10 @@ import {
 import { api } from "@/services/api";
 import { DiagramResponse, User } from "@/types";
 import { importEnterpriseArchitectXmi } from "@/services/xmiImporter";
+import {
+  readXmlFileWithEncoding,
+  cleanSpecialCharacters,
+} from "@/services/xmiEncodingHelper";
 import { ImageImportModal } from "@/components/canvas/ImageImportModal";
 import { convertImageToDiagramWithGemini } from "@/services/geminiDiagramService";
 
@@ -117,10 +121,12 @@ export default function DiagramsPage() {
 
     try {
       setIsImporting(true);
-      const xmlContent = await file.text();
+      // Detección automática de codificación (UTF-8, UTF-8 con BOM, Windows-1252 o ISO-8859-1)
+      const xmlContent = await readXmlFileWithEncoding(file);
 
-      // 1. Obtener nombre base del archivo sin extensión
-      const baseName = file.name.replace(/\.[^/.]+$/, "").trim() || "Diagrama";
+      // 1. Obtener nombre base del archivo sin extensión y limpiar caracteres especiales
+      const rawBaseName = file.name.replace(/\.[^/.]+$/, "").trim() || "Diagrama";
+      const baseName = cleanSpecialCharacters(rawBaseName);
 
       // 2. Formatear fecha y hora actual
       const now = new Date();

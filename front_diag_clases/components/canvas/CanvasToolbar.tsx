@@ -1,13 +1,14 @@
 "use client";
 
 import React from "react";
-import { Plus, StickyNote, Download, FileCode, Eye, Wifi, Server, Sparkles } from "lucide-react";
+import { Plus, StickyNote, Download, FileCode, Eye, Wifi, Server, Sparkles, Smartphone } from "lucide-react";
 
 interface CanvasToolbarProps {
   onAddClass: () => void;
   onAddNote: () => void;
   onOpenPreview: () => void;
   onOpenSpringBootExport: () => void;
+  onOpenFlutterExport: () => void;
   isWsConnected: boolean;
 }
 
@@ -16,6 +17,7 @@ export function CanvasToolbar({
   onAddNote,
   onOpenPreview,
   onOpenSpringBootExport,
+  onOpenFlutterExport,
   isWsConnected,
 }: CanvasToolbarProps) {
   return (
@@ -60,6 +62,18 @@ export function CanvasToolbar({
       >
         <Server className="w-3.5 h-3.5 text-emerald-600" />
         Exportar Spring Boot (ZIP)
+      </button>
+
+      <div className="h-4 w-px bg-slate-200" />
+
+      {/* Botón Exportar Proyecto Flutter */}
+      <button
+        onClick={onOpenFlutterExport}
+        title="Generar y descargar proyecto frontend Flutter con IA Local (Voz + NL a CRUD)"
+        className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-bold text-sky-800 bg-sky-50 hover:bg-sky-100 rounded transition-all border border-sky-300 shadow-xs hover:scale-[1.02] active:scale-[0.98]"
+      >
+        <Smartphone className="w-3.5 h-3.5 text-sky-600" />
+        Exportar Flutter (ZIP)
       </button>
 
       <div className="h-4 w-px bg-slate-200" />

@@ -29,6 +29,7 @@ import { RelationTypePickerModal } from "@/components/canvas/RelationTypePickerM
 import { EdgeEditModal } from "@/components/canvas/EdgeEditModal";
 import { CodePreviewModal } from "@/components/canvas/CodePreviewModal";
 import { SpringBootExportModal } from "@/components/canvas/SpringBootExportModal";
+import { FlutterExportModal } from "@/components/canvas/FlutterExportModal";
 import { CollaboratorsHeader } from "@/components/canvas/CollaboratorsHeader";
 import { CanvasToolbar } from "@/components/canvas/CanvasToolbar";
 import { CanvasAiPromptBar } from "@/components/canvas/CanvasAiPromptBar";
@@ -114,6 +115,9 @@ function DiagramEditorContent() {
 
   // Modal de exportación de proyecto Spring Boot (MVC + PostgreSQL)
   const [isSpringBootExportOpen, setIsSpringBootExportOpen] = useState(false);
+
+  // Modal de exportación de proyecto Flutter (Voz + IA Local)
+  const [isFlutterExportOpen, setIsFlutterExportOpen] = useState(false);
 
   // Generación de códigos en vivo para previsualización
   const xmiCode = useMemo(
@@ -945,6 +949,7 @@ function DiagramEditorContent() {
           onAddNote={handleAddNote}
           onOpenPreview={() => setIsCodePreviewOpen(true)}
           onOpenSpringBootExport={() => setIsSpringBootExportOpen(true)}
+          onOpenFlutterExport={() => setIsFlutterExportOpen(true)}
           isWsConnected={isWsConnected}
         />
 
@@ -1037,6 +1042,15 @@ function DiagramEditorContent() {
       <SpringBootExportModal
         isOpen={isSpringBootExportOpen}
         onClose={() => setIsSpringBootExportOpen(false)}
+        nodes={nodes}
+        edges={edges}
+        diagramName={diagram.nombre}
+      />
+
+      {/* Modal para Generar y Exportar Proyecto Flutter (Voz + IA Local) */}
+      <FlutterExportModal
+        isOpen={isFlutterExportOpen}
+        onClose={() => setIsFlutterExportOpen(false)}
         nodes={nodes}
         edges={edges}
         diagramName={diagram.nombre}

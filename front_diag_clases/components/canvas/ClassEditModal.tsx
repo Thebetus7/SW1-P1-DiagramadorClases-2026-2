@@ -53,10 +53,11 @@ export function ClassEditModal({
 
   // Manejadores para Atributos
   const handleAddAttribute = () => {
+    const nextIdx = attributes.length;
     const newAttr: UmlAttribute = {
-      id: `attr-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+      id: `attr_${Date.now()}_${nextIdx}`,
       visibility: "-",
-      name: `nuevoAtributo_${attributes.length + 1}`,
+      name: `nuevoAtributo_${nextIdx + 1}`,
       type: "string",
     };
     setAttributes([...attributes, newAttr]);
@@ -74,10 +75,11 @@ export function ClassEditModal({
 
   // Manejadores para Métodos / Operaciones
   const handleAddMethod = () => {
+    const nextIdx = methods.length;
     const newMethod: UmlMethod = {
-      id: `meth-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+      id: `meth_${Date.now()}_${nextIdx}`,
       visibility: "+",
-      name: `operacion_${methods.length + 1}`,
+      name: `operacion_${nextIdx + 1}`,
       parameters: "",
       returnType: "void",
     };

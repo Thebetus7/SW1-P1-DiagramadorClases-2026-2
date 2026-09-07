@@ -279,9 +279,6 @@ export function ImageImportModal({
               <h3 className="text-sm font-bold text-slate-900">
                 Importar Diagrama desde Imagen
               </h3>
-              <p className="text-xs text-slate-500">
-                Gemini IA analiza diagramas digitales, fotos de pizarra o bocetos a mano
-              </p>
             </div>
           </div>
           <button
@@ -302,7 +299,7 @@ export function ImageImportModal({
                 Nombre del Diagrama
               </label>
               <span className="text-[11px] text-slate-400 font-normal">
-                (Opcional, se autogenerará si está vacío)
+                (Opcional)
               </span>
             </div>
             <input
@@ -328,7 +325,7 @@ export function ImageImportModal({
               }`}
             >
               <Upload className="w-3.5 h-3.5" />
-              Subir Archivo / Pegar
+              Subir Archivo
             </button>
             <button
               type="button"
@@ -536,7 +533,7 @@ export function ImageImportModal({
             ) : (
               <>
                 <Sparkles className="w-4 h-4" />
-                Analizar e Importar
+                Importar
               </>
             )}
           </button>

@@ -373,7 +373,7 @@ function generateApplicationProperties(projectName: string): string {
 # Configuración Principal de Spring Boot y Servidor
 # ===================================================================
 spring.application.name=${toSnakeCase(projectName || "backend")}
-server.port=\${PORT:8080}
+server.port=\${PORT:8081}
 
 # Habilitar logging de consultas SQL
 logging.level.org.hibernate.SQL=DEBUG
@@ -413,7 +413,7 @@ function generateEnvExample(): string {
 # Copia este archivo a '.env' o expórtalas en tu terminal
 # ===================================================================
 
-PORT=8080
+PORT=8081
 DB_HOST=localhost
 DB_PORT=5432
 DB_NAME=diagrama_db
@@ -439,7 +439,7 @@ public class ${className} {
         SpringApplication.run(${className}.class, args);
         System.out.println("=================================================");
         System.out.println("🚀 Backend Spring Boot iniciado correctamente!");
-        System.out.println("📚 Endpoints disponibles en: http://localhost:8080/api/schemas");
+        System.out.println("📚 Endpoints disponibles en: http://localhost:8081/api/schemas");
         System.out.println("=================================================");
     }
 }
@@ -820,7 +820,7 @@ function generateRequestsHttp(classes: ParsedClass[]): string {
 ### Compatible con: VS Code REST Client, IntelliJ IDEA HTTP Client, Postman
 ### ===================================================================
 
-@baseUrl = http://localhost:8080/api
+@baseUrl = http://localhost:8081/api
 
 ### -------------------------------------------------------------------
 ### 0. CATÁLOGO GLOBAL DE ESQUEMAS
@@ -1042,7 +1042,7 @@ El proyecto está preconfigurado para leer las credenciales mediante **variables
 
 | Variable | Descripción | Valor por Defecto |
 | :--- | :--- | :--- |
-| \`PORT\` | Puerto donde correrá el servidor | \`8080\` |
+| \`PORT\` | Puerto donde correrá el servidor | \`8081\` |
 | \`DB_HOST\` | Host de PostgreSQL | \`localhost\` |
 | \`DB_PORT\` | Puerto de PostgreSQL | \`5432\` |
 | \`DB_NAME\` | Nombre de la base de datos | \`diagrama_db\` |
@@ -1109,6 +1109,39 @@ ${classes.map((c) => `### Entidad: \`${c.pascalName}\` (Tabla: \`${c.tableName}\
 `;
 }
 
+function generateMvnwScript(): string {
+  return `#!/bin/sh
+# ----------------------------------------------------------------------------
+# Maven Wrapper Executable Script for Unix / Linux / macOS / Git Bash
+# ----------------------------------------------------------------------------
+which mvn >/dev/null 2>&1
+if [ $? -eq 0 ]; then
+  exec mvn spring-boot:run "$@"
+else
+  echo "[INFO] Ejecutando Spring Boot con Maven Wrapper..."
+  mvn spring-boot:run "$@"
+fi
+`;
+}
+
+function generateMvnwCmdScript(): string {
+  return `@REM ----------------------------------------------------------------------------
+@REM Maven Wrapper Executable Script for Windows (CMD / PowerShell)
+@REM ----------------------------------------------------------------------------
+@echo off
+mvn spring-boot:run %*
+if %ERRORLEVEL% NEQ 0 (
+    echo [INFO] Si 'mvn' no esta configurado en el PATH, ejecuta la clase principal desde tu IDE favorito.
+)
+`;
+}
+
+function generateMavenWrapperProperties(): string {
+  return `distributionUrl=https://repo.maven.apache.org/maven2/org/apache/maven/apache-maven/3.9.6/apache-maven-3.9.6-bin.zip
+wrapperUrl=https://repo.maven.apache.org/maven2/org/apache/maven/wrapper/maven-wrapper/3.2.0/maven-wrapper-3.2.0.jar
+`;
+}
+
 /**
  * Función principal para generar el proyecto Spring Boot completo
  */
@@ -1126,6 +1159,25 @@ export function generateSpringBootProject(
   files.push({
     path: "pom.xml",
     content: generatePomXml(projectName),
+    category: "config",
+  });
+
+  // 1b. Executables mvnw, mvnw.cmd, .mvn/wrapper/maven-wrapper.properties
+  files.push({
+    path: "mvnw",
+    content: generateMvnwScript(),
+    category: "config",
+  });
+
+  files.push({
+    path: "mvnw.cmd",
+    content: generateMvnwCmdScript(),
+    category: "config",
+  });
+
+  files.push({
+    path: ".mvn/wrapper/maven-wrapper.properties",
+    content: generateMavenWrapperProperties(),
     category: "config",
   });
 

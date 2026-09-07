@@ -1,5 +1,6 @@
 import { Node, Edge } from "@xyflow/react";
 import { UmlAttribute, UmlMethod, UmlRelationType, UmlVisibility } from "@/types";
+import { cleanSpecialCharacters } from "./xmiEncodingHelper";
 
 export interface ImportedDiagramData {
   diagramName: string;
@@ -98,8 +99,10 @@ export function importEnterpriseArchitectXmi(
   xmlContent: string,
   defaultName: string = "Diagrama Importado"
 ): ImportedDiagramData {
+  // Limpiar posibles problemas de encoding o mojibake previo al parseo XML
+  const sanitizedXml = cleanSpecialCharacters(xmlContent);
   const parser = getDOMParser();
-  const xmlDoc = parser.parseFromString(xmlContent, "application/xml");
+  const xmlDoc = parser.parseFromString(sanitizedXml, "application/xml");
 
   const parserErrors = xmlDoc.getElementsByTagName("parsererror");
   if (parserErrors && parserErrors.length > 0) {
@@ -109,14 +112,14 @@ export function importEnterpriseArchitectXmi(
   }
 
   // 1. Extraer nombre del paquete o diagrama si existe
-  let diagramName = defaultName;
+  let diagramName = cleanSpecialCharacters(defaultName);
   const allPackaged = getElements(xmlDoc, "packagedElement");
   for (const pkg of allPackaged) {
     const typeVal = getAttr(pkg, "type", "xmi:type");
     if (typeVal === "uml:Package" || typeVal === "Package") {
       const nameVal = getAttr(pkg, "name");
       if (nameVal) {
-        diagramName = nameVal;
+        diagramName = cleanSpecialCharacters(nameVal);
         break;
       }
     }
@@ -180,7 +183,7 @@ export function importEnterpriseArchitectXmi(
     const xmiId =
       getAttr(classEl, "id", "xmi:id", "idref", "xmi:idref") ||
       `class-${Date.now()}-${Math.random()}`;
-    const className = getAttr(classEl, "name") || "ClaseSinNombre";
+    const className = cleanSpecialCharacters(getAttr(classEl, "name") || "ClaseSinNombre");
     const nodeId = `node-${Date.now()}-${Math.floor(Math.random() * 1000000)}`;
     xmiToNodeId.set(xmiId, nodeId);
 
@@ -191,8 +194,9 @@ export function importEnterpriseArchitectXmi(
     const ownedAttrs = getElements(classEl, "ownedAttribute");
     ownedAttrs.forEach((attrEl, idx) => {
       // Ignorar extremos de asociación incluidos como ownedAttribute sin nombre
-      const attrName = getAttr(attrEl, "name");
-      if (!attrName) return;
+      const rawAttrName = getAttr(attrEl, "name");
+      if (!rawAttrName) return;
+      const attrName = cleanSpecialCharacters(rawAttrName);
 
       const attrVis = parseVisibility(getAttr(attrEl, "visibility", "scope"));
       let attrType = "string";
@@ -212,7 +216,7 @@ export function importEnterpriseArchitectXmi(
         id: `attr-${idx + 1}-${Date.now()}`,
         visibility: attrVis,
         name: attrName,
-        type: attrType,
+        type: cleanSpecialCharacters(attrType),
       });
     });
 
@@ -220,15 +224,16 @@ export function importEnterpriseArchitectXmi(
     if (attributes.length === 0) {
       const eaAttrs = getElements(classEl, "attribute");
       eaAttrs.forEach((attrEl, idx) => {
-        const attrName = getAttr(attrEl, "name");
-        if (!attrName) return;
+        const rawAttrName = getAttr(attrEl, "name");
+        if (!rawAttrName) return;
+        const attrName = cleanSpecialCharacters(rawAttrName);
         const attrVis = parseVisibility(getAttr(attrEl, "scope", "visibility"));
         const attrType = parseTypeName(getAttr(attrEl, "type") || "string");
         attributes.push({
           id: `attr-${idx + 1}-${Date.now()}`,
           visibility: attrVis,
           name: attrName,
-          type: attrType,
+          type: cleanSpecialCharacters(attrType),
         });
       });
     }
@@ -239,8 +244,9 @@ export function importEnterpriseArchitectXmi(
     // a) Buscar en <ownedOperation>
     const ownedOps = getElements(classEl, "ownedOperation");
     ownedOps.forEach((opEl, idx) => {
-      const opName = getAttr(opEl, "name");
-      if (!opName) return;
+      const rawOpName = getAttr(opEl, "name");
+      if (!rawOpName) return;
+      const opName = cleanSpecialCharacters(rawOpName);
 
       const opVis = parseVisibility(getAttr(opEl, "visibility", "scope"));
       let returnType = "void";
@@ -249,7 +255,7 @@ export function importEnterpriseArchitectXmi(
       const paramElements = getElements(opEl, "ownedParameter");
       paramElements.forEach((pEl) => {
         const direction = getAttr(pEl, "direction");
-        const pName = getAttr(pEl, "name");
+        const rawPName = getAttr(pEl, "name");
         let pType = "string";
 
         if (getAttr(pEl, "type")) {
@@ -264,9 +270,9 @@ export function importEnterpriseArchitectXmi(
         }
 
         if (direction === "return") {
-          returnType = pType;
-        } else if (pName) {
-          paramsList.push(`${pName}: ${pType}`);
+          returnType = cleanSpecialCharacters(pType);
+        } else if (rawPName) {
+          paramsList.push(`${cleanSpecialCharacters(rawPName)}: ${cleanSpecialCharacters(pType)}`);
         }
       });
 
@@ -283,8 +289,9 @@ export function importEnterpriseArchitectXmi(
     if (methods.length === 0) {
       const eaOps = getElements(classEl, "operation");
       eaOps.forEach((opEl, idx) => {
-        const opName = getAttr(opEl, "name");
-        if (!opName) return;
+        const rawOpName = getAttr(opEl, "name");
+        if (!rawOpName) return;
+        const opName = cleanSpecialCharacters(rawOpName);
         const opVis = parseVisibility(getAttr(opEl, "scope", "visibility"));
         methods.push({
           id: `meth-${idx + 1}-${Date.now()}`,
@@ -379,7 +386,7 @@ export function importEnterpriseArchitectXmi(
       type: "umlNote",
       position,
       data: {
-        content: bodyText || "Nota importada",
+        content: cleanSpecialCharacters(bodyText || "Nota importada"),
       },
     });
 
@@ -457,7 +464,7 @@ export function importEnterpriseArchitectXmi(
             type: "umlEdge",
             data: {
               relationType: "REALIZATION",
-              name: getAttr(pkg, "name") || "",
+              name: cleanSpecialCharacters(getAttr(pkg, "name") || ""),
             },
           });
         }
@@ -478,7 +485,7 @@ export function importEnterpriseArchitectXmi(
             type: "umlEdge",
             data: {
               relationType: "DEPENDENCY",
-              name: getAttr(pkg, "name") || "",
+              name: cleanSpecialCharacters(getAttr(pkg, "name") || ""),
             },
           });
         }
@@ -546,7 +553,7 @@ export function importEnterpriseArchitectXmi(
               relationType: relType,
               sourceMultiplicity,
               targetMultiplicity,
-              name: getAttr(assocEl, "name") || "",
+              name: cleanSpecialCharacters(getAttr(assocEl, "name") || ""),
             },
           });
         }

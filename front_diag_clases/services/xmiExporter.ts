@@ -7,6 +7,10 @@ import {
   UmlNoteData,
   UmlVisibility,
 } from "@/types";
+import {
+  escapeXmlWithEncoding,
+  cleanSpecialCharacters,
+} from "./xmiEncodingHelper";
 
 // Helper para convertir visibilidad simbólica a estándar UML / XMI
 export function mapVisibilityToXmi(v?: UmlVisibility | string): string {
@@ -51,14 +55,14 @@ export function parseAttributeString(attrStr: string): UmlAttribute {
   const match = attrStr.match(/^([+\-#~])?\s*([a-zA-Z0-9_$]+)\s*:\s*(.+)$/);
   if (match) {
     return {
-      id: `attr-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
+      id: `attr-${Date.now()}-${Math.floor(Math.random() * 100000)}`,
       visibility: (match[1] as UmlVisibility) || "+",
       name: match[2],
       type: match[3],
     };
   }
   return {
-    id: `attr-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
+    id: `attr-${Date.now()}-${Math.floor(Math.random() * 100000)}`,
     visibility: "+",
     name:
       attrStr
@@ -75,7 +79,7 @@ export function parseMethodString(methodStr: string): UmlMethod {
   );
   if (match) {
     return {
-      id: `meth-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
+      id: `meth-${Date.now()}-${Math.floor(Math.random() * 100000)}`,
       visibility: (match[1] as UmlVisibility) || "+",
       name: match[2],
       parameters: match[3] || "",
@@ -83,7 +87,7 @@ export function parseMethodString(methodStr: string): UmlMethod {
     };
   }
   return {
-    id: `meth-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
+    id: `meth-${Date.now()}-${Math.floor(Math.random() * 100000)}`,
     visibility: "+",
     name:
       methodStr
@@ -116,6 +120,25 @@ function generateXmiId(prefix: string, seed: string | number): string {
 }
 
 /**
+ * Genera identificadores con sufijos estrictamente numéricos para atributos y métodos.
+ * Enterprise Architect requiere que los identificadores de atributos y operaciones
+ * en XMI 2.1 terminen en un token puramente numérico (sin sufijos alfanuméricos como 2sls)
+ * para registrarlos en su tabla interna t_attribute / t_operation.
+ */
+function generateMemberXmiId(
+  prefix: "ATTR" | "OP",
+  classNodeId: string,
+  memberId: string | undefined,
+  index: number
+): string {
+  const cleanNode = String(classNodeId).replace(/[^a-zA-Z0-9_]/g, "_");
+  // Extraer exclusivamente los dígitos numéricos del memberId
+  const digits = memberId ? memberId.replace(/\D/g, "") : "";
+  const suffix = digits ? `${digits}_${index}` : `${index}`;
+  return `EAID_${prefix}_${cleanNode}_${prefix.toLowerCase()}_${suffix}`;
+}
+
+/**
  * Genera el documento XML / XMI 2.1 conforme a la especificación UML 2.1 / 2.5
  * e incluye las extensiones nativas completas de Enterprise Architect v15
  * para renderizar asociaciones sólidas, herencias, notas y sus conexiones NoteLink.
@@ -125,7 +148,7 @@ export function generateEnterpriseArchitectXmi(
   nodes: Node[],
   edges: Edge[],
 ): string {
-  const cleanDiagramName = diagramName || "Diagrama de Clases del Sistema";
+  const cleanDiagramName = cleanSpecialCharacters(diagramName || "Diagrama de Clases del Sistema");
   const packageId = generateXmiId("PKG", "RootPackage");
   const modelId = generateXmiId("MODEL", "Model");
   const diagramId = generateXmiId("DIAGRAM", "ClassDiagram");
@@ -232,19 +255,19 @@ export function generateEnterpriseArchitectXmi(
     // Atributos (ownedAttribute / Property)
     const attributes = (data.attributes || []).map(normalizeAttribute);
     attributes.forEach((attr, idx) => {
-      const attrId = generateXmiId("ATTR", `${node.id}_${attr.id || idx}`);
+      const attrId = generateMemberXmiId("ATTR", node.id, attr.id, idx);
       const visibility = mapVisibilityToXmi(attr.visibility);
       const attrType = mapPrimitiveType(attr.type);
 
       xml += `        <ownedAttribute xmi:type="uml:Property" xmi:id="${attrId}" name="${escapeXml(attr.name)}" visibility="${visibility}">\n`;
-      xml += `          <type xmi:type="uml:PrimitiveType" name="${escapeXml(attrType)}"/>\n`;
+      xml += `          <type xmi:type="uml:PrimitiveType" href="http://schema.omg.org/spec/UML/2.1/uml.xml#${escapeXml(attrType)}" name="${escapeXml(attrType)}"/>\n`;
       xml += `        </ownedAttribute>\n`;
     });
 
     // Operaciones / Métodos (ownedOperation)
     const methods = (data.methods || []).map(normalizeMethod);
     methods.forEach((method, idx) => {
-      const opId = generateXmiId("OP", `${node.id}_${method.id || idx}`);
+      const opId = generateMemberXmiId("OP", node.id, method.id, idx);
       const visibility = mapVisibilityToXmi(method.visibility);
       const retType = mapPrimitiveType(method.returnType);
 
@@ -254,7 +277,7 @@ export function generateEnterpriseArchitectXmi(
       if (retType && retType.toLowerCase() !== "void") {
         const retParamId = generateXmiId("PARAM_RET", `${opId}_return`);
         xml += `          <ownedParameter xmi:type="uml:Parameter" xmi:id="${retParamId}" name="return" direction="return">\n`;
-        xml += `            <type xmi:type="uml:PrimitiveType" name="${escapeXml(retType)}"/>\n`;
+        xml += `            <type xmi:type="uml:PrimitiveType" href="http://schema.omg.org/spec/UML/2.1/uml.xml#${escapeXml(retType)}" name="${escapeXml(retType)}"/>\n`;
         xml += `          </ownedParameter>\n`;
       }
 
@@ -268,7 +291,7 @@ export function generateEnterpriseArchitectXmi(
           const paramId = generateXmiId("PARAM", `${opId}_${pIdx}`);
 
           xml += `          <ownedParameter xmi:type="uml:Parameter" xmi:id="${paramId}" name="${escapeXml(pName)}" direction="in">\n`;
-          xml += `            <type xmi:type="uml:PrimitiveType" name="${escapeXml(pType)}"/>\n`;
+          xml += `            <type xmi:type="uml:PrimitiveType" href="http://schema.omg.org/spec/UML/2.1/uml.xml#${escapeXml(pType)}" name="${escapeXml(pType)}"/>\n`;
           xml += `          </ownedParameter>\n`;
         });
       }
@@ -517,6 +540,48 @@ export function generateEnterpriseArchitectXmi(
     xml += `      <element xmi:idref="${classId}" xmi:type="uml:Class" name="${escapeXml(className)}" scope="public">\n`;
     xml += `        <properties isSpecification="false" sType="Class" ntype="0" scope="public" package="${packageId}"/>\n`;
 
+    // Atributos en la sección de extensión de EA
+    const attributes = (data.attributes || []).map(normalizeAttribute);
+    if (attributes.length > 0) {
+      xml += `        <attributes>\n`;
+      attributes.forEach((attr, idx) => {
+        const attrId = generateMemberXmiId("ATTR", node.id, attr.id, idx);
+        const visibility = mapVisibilityToXmi(attr.visibility);
+        const attrType = mapPrimitiveType(attr.type);
+        xml += `          <attribute xmi:idref="${attrId}" name="${escapeXml(attr.name)}" scope="${visibility}">\n`;
+        xml += `            <initial/>\n`;
+        xml += `            <documentation/>\n`;
+        xml += `            <model type="${escapeXml(attrType)}"/>\n`;
+        xml += `            <properties type="${escapeXml(attrType)}" derived="0" collection="false" duplicates="0" changeability="changeable"/>\n`;
+        xml += `            <coords ordered="0"/>\n`;
+        xml += `            <containment containment="Not Specified" position="${idx}"/>\n`;
+        xml += `            <design style="1"/>\n`;
+        xml += `            <appearance value="1"/>\n`;
+        xml += `            <modifiers isStatic="false" isConst="false"/>\n`;
+        xml += `            <style value="Union=0;Derived=0;AllowDuplicates=0;"/>\n`;
+        xml += `          </attribute>\n`;
+      });
+      xml += `        </attributes>\n`;
+    }
+
+    // Operaciones en la sección de extensión de EA
+    const methods = (data.methods || []).map(normalizeMethod);
+    if (methods.length > 0) {
+      xml += `        <operations>\n`;
+      methods.forEach((method, idx) => {
+        const opId = generateMemberXmiId("OP", node.id, method.id, idx);
+        const visibility = mapVisibilityToXmi(method.visibility);
+        const retType = mapPrimitiveType(method.returnType);
+        xml += `          <operation xmi:idref="${opId}" name="${escapeXml(method.name)}" scope="${visibility}">\n`;
+        xml += `            <properties returnType="${escapeXml(retType)}" derived="0" duplicates="0" changeability="changeable"/>\n`;
+        xml += `            <appearance value="1"/>\n`;
+        xml += `            <modifiers isStatic="false" isConst="false"/>\n`;
+        xml += `            <style value="Union=0;Derived=0;AllowDuplicates=0;"/>\n`;
+        xml += `          </operation>\n`;
+      });
+      xml += `        </operations>\n`;
+    }
+
     if (connectedLinks.length > 0) {
       xml += `        <links>\n`;
       connectedLinks.forEach((link) => {
@@ -589,7 +654,7 @@ export function generateEnterpriseArchitectXmi(
   xml += `        <properties name="${escapeXml(cleanDiagramName)}" type="Logical" package="${packageId}"/>\n`;
   xml += `        <model package="${packageId}" localID="1" owner="${packageId}"/>\n`;
   xml += `        <project author="Diagramador UML" version="1.0" created="${new Date().toISOString()}" modified="${new Date().toISOString()}"/>\n`;
-  xml += `        <style1 value="ShowPrivate=1;ShowProtected=1;ShowPublic=1;HideReferences=0;suppress=0;"/>\n`;
+  xml += `        <style1 value="ShowPrivate=1;ShowProtected=1;ShowPublic=1;ShowPackage=1;HideReferences=0;suppress=0;ShowAtts=1;ShowOps=1;"/>\n`;
   xml += `        <style2 value="SaveDiagram=1;"/>\n`;
   xml += `        <elements>\n`;
 
@@ -616,7 +681,7 @@ export function generateEnterpriseArchitectXmi(
     const right = posX + width;
     const bottom = posY + height;
 
-    xml += `          <element geometry="Left=${left};Top=${top};Right=${right};Bottom=${bottom};" subject="${classId}" seqno="${index + 1}"/>\n`;
+    xml += `          <element geometry="Left=${left};Top=${top};Right=${right};Bottom=${bottom};" subject="${classId}" seqno="${index + 1}" style="ShowAtts=1;ShowOps=1;ShowStereo=1;ShowCons=1;ShowTags=1;"/>\n`;
   });
 
   // Elementos gráficos en el diagrama (Notas)
@@ -665,19 +730,14 @@ function parseMultiplicity(mult: string): { lower: string; upper: string } {
   return { lower: mult, upper: mult };
 }
 
-// Helper para escapar caracteres especiales en XML
 function escapeXml(unsafe: string): string {
-  if (!unsafe) return "";
-  return unsafe
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&apos;");
+  return escapeXmlWithEncoding(unsafe);
 }
 
 /**
- * Dispara la descarga del archivo .xmi en UTF-8 en el navegador del usuario
+ * Dispara la descarga del archivo .xmi en UTF-8 con BOM en el navegador del usuario.
+ * El prefijo BOM (\uFEFF) es indispensable para que Enterprise Architect (MSXML en Windows)
+ * detecte automáticamente la codificación UTF-8 y no convierta 'ñ' o tildes en caracteres corruptos.
  */
 export function downloadEnterpriseArchitectXmi(
   diagramName: string,
@@ -685,13 +745,16 @@ export function downloadEnterpriseArchitectXmi(
   edges: Edge[],
 ): void {
   const xmlContent = generateEnterpriseArchitectXmi(diagramName, nodes, edges);
-  const blob = new Blob([xmlContent], {
+  const blob = new Blob(["\uFEFF", xmlContent], {
     type: "application/xml;charset=utf-8",
   });
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = url;
-  const fileName = `${(diagramName || "diagrama").replace(/[^a-zA-Z0-9_\-]/g, "_")}_EA15.xmi`;
+  const safeName = cleanSpecialCharacters(diagramName || "diagrama")
+    .replace(/[\\/:*?"<>|]/g, "_")
+    .trim();
+  const fileName = `${safeName || "diagrama"}_EA15.xmi`;
   link.setAttribute("download", fileName);
   document.body.appendChild(link);
   link.click();
