@@ -228,10 +228,16 @@ export default function DiagramsPage() {
     try {
       setIsProcessingImage(true);
 
-      // 1. Llamar a Gemini Vision para convertir la imagen en JSON
+      // 1. Llamar a Gemini Vision para convertir la imagen en JSON estructurado UML 2.5
       const result = await convertImageToDiagramWithGemini(base64Data, mimeType);
 
-      // 2. Formatear fecha y hora actual
+      if (!result.nodes || result.nodes.length === 0) {
+        alert("No se detectaron clases en la imagen proporcionada. Por favor intenta con una imagen más nítida, con mejor iluminación o mayor contraste.");
+        return;
+      }
+
+      // 2. Formatear nombre del diagrama y fecha/hora
+      const baseName = cleanSpecialCharacters(diagramName.trim() || "Diagrama_Imagen");
       const now = new Date();
       const year = now.getFullYear();
       const month = String(now.getMonth() + 1).padStart(2, "0");
@@ -241,9 +247,9 @@ export default function DiagramsPage() {
       const seconds = String(now.getSeconds()).padStart(2, "0");
       const formattedDateTime = `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
 
-      const finalDiagramName = `${diagramName} - ${formattedDateTime}`;
+      const finalDiagramName = `${baseName} - ${formattedDateTime}`;
 
-      // 3. Crear diagrama con el lienzo generado por IA
+      // 3. Crear diagrama con el lienzo normalizado conforme a los criterios de Enterprise Architect
       const lienzoJson = JSON.stringify({
         nodes: result.nodes,
         edges: result.edges,
@@ -251,7 +257,7 @@ export default function DiagramsPage() {
 
       const created = await api.createDiagram(finalDiagramName, currentUser.id, lienzoJson);
 
-      // 4. Cerrar modal y redirigir al nuevo diagrama
+      // 4. Cerrar modal y redirigir al nuevo diagrama creado
       setShowImageImportModal(false);
       router.push(`/diagrams/${created.id}`);
     } catch (err: any) {

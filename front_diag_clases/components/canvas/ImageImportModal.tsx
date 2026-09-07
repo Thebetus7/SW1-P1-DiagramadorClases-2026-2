@@ -528,12 +528,12 @@ export function ImageImportModal({
             {isProcessing ? (
               <>
                 <Loader2 className="w-4 h-4 animate-spin" />
-                Analizando con Gemini IA...
+                <span>Analizando con IA...</span>
               </>
             ) : (
               <>
                 <Sparkles className="w-4 h-4" />
-                Importar
+                <span>Importar</span>
               </>
             )}
           </button>
