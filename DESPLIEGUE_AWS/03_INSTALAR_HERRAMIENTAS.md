@@ -12,16 +12,13 @@ Abre tu terminal en la carpeta donde descargaste tu archivo `clave-diagramador-a
 En Windows, si la clave tiene permisos demasiado abiertos, OpenSSH puede arrojar un error de advertencia. Puedes conectarte directamente con:
 
 ```powershell
-ssh -i "clave-diagramador-aws.pem" ec2-user@<TU_IP_PUBLICA_EC2>
+ssh -i "C:\Users\USUARIO\.ssh\sw1-ec2-key.pem" ec2-user@3.15.230.109
 ```
 
-> *Ejemplo:*  
-> `ssh -i "clave-diagramador-aws.pem" ec2-user@54.210.88.145`
-
-Si PowerShell muestra un error indicando *"Permissions for clave-diagramador-aws.pem are too open"*, ejecuta estos comandos para restringir los permisos en Windows:
+Si PowerShell muestra un error indicando *"Permissions for sw1-ec2-key.pem are too open"*, ejecuta estos comandos para restringir los permisos en Windows:
 ```powershell
-icacls "clave-diagramador-aws.pem" /inheritance:r
-icacls "clave-diagramador-aws.pem" /grant:r "$($env:USERNAME):(R)"
+icacls "C:\Users\USUARIO\.ssh\sw1-ec2-key.pem" /inheritance:r
+icacls "C:\Users\USUARIO\.ssh\sw1-ec2-key.pem" /grant:r "$($env:USERNAME):(R)"
 ```
 
 ### B. Si usas Linux o macOS:

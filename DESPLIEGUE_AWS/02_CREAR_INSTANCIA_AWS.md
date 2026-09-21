@@ -17,7 +17,9 @@ En este paso aprenderás a aprovisionar una máquina virtual en **Amazon Web Ser
 ### 1. Navegar al Servicio EC2
 1. Inicia sesión en la **Consola de Administración de AWS**.
 2. En la barra superior de búsqueda, escribe `EC2` y selecciona el primer resultado (**EC2 - Virtual Servers in the Cloud**).
-3. Asegúrate de estar en una región geográfica cercana o económica (por ejemplo: `us-east-1` N. Virginia o `us-east-2` Ohio) en el selector de región ubicado en la esquina superior derecha.
+3. En el selector de región ubicado en la barra superior (esquina superior derecha), selecciona la región **Ohio (`us-east-2`)**.
+   > [!IMPORTANT]
+   > Mantén siempre seleccionada la región **EE. UU. Este (Ohio) `us-east-2`** para que tu instancia EC2, par de claves (.pem) y Security Group se creen en el mismo lugar y no se pierdan de vista en la consola.
 
 ---
 
