@@ -20,6 +20,11 @@ export class DiagramWebSocketService {
     const getWsUrl = () => {
       if (process.env.NEXT_PUBLIC_WS_URL) return process.env.NEXT_PUBLIC_WS_URL;
       if (typeof window !== "undefined") {
+        const port = window.location.port;
+        if (!port || port === "80" || port === "443") {
+          const proto = window.location.protocol === "https:" ? "https:" : "http:";
+          return `${proto}//${window.location.host}/ws`;
+        }
         return `http://${window.location.hostname}:8080/ws`;
       }
       return "http://localhost:8080/ws";
