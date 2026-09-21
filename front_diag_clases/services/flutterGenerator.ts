@@ -263,7 +263,7 @@ flutter:
 function generateApiConfig(): string {
   return `import 'package:flutter/foundation.dart';
 
-/// Configuración de endpoints y conectividad para Backend Spring Boot y modelos IA Locales.
+/// Configuración de endpoints y conectividad con auto-conmutación inteligente.
 class ApiConfig {
   /// Puerto por defecto del backend Spring Boot generado
   static const int defaultPort = 8081;
@@ -271,39 +271,61 @@ class ApiConfig {
   /// Puerto por defecto del servidor Ollama Local
   static const int ollamaPort = 11434;
 
-  /// URL Base configurable en tiempo de ejecución
+  /// URL Base personalizada (ej: 'https://mi-tunnel.ngrok-free.app/api' o 'http://192.168.1.15:8081/api')
   static String customBaseUrl = '';
 
-  /// URL Base de Ollama configurable
+  /// URL Base de Ollama personalizada
   static String customOllamaUrl = '';
 
-  /// Obtiene la URL base adecuada según la plataforma (Web, Emulador Android, o ADB Reverse)
-  static String get baseUrl {
+  /// Endpoint activo actualmente confirmado
+  static String? _confirmedWorkingBaseUrl;
+
+  /// Lista de endpoints candidatos a probar en orden de prioridad
+  static List<String> get candidateUrls {
     if (customBaseUrl.isNotEmpty) {
-      return customBaseUrl;
+      return [customBaseUrl];
     }
-
     if (kIsWeb) {
-      return 'http://localhost:\$defaultPort/api';
+      return ['http://localhost:\$defaultPort/api'];
     }
-
-    // En Android (Físico con ADB Reverse o Emulador)
-    // Con 'adb reverse tcp:8081 tcp:8081' se puede usar localhost directamente.
-    // Si se usa emulador sin ADB reverse, usar 10.0.2.2
-    return 'http://10.0.2.2:\$defaultPort/api';
+    return [
+      // 1. Prioridad: Teléfono físico con cable USB y 'adb reverse tcp:8081 tcp:8081'
+      'http://localhost:\$defaultPort/api',
+      // 2. Fallback automático: Emulador oficial de Android Studio
+      'http://10.0.2.2:\$defaultPort/api',
+    ];
   }
 
-  /// Obtiene la URL de Ollama Local según la plataforma
+  /// Devuelve la URL base activa o la candidata principal
+  static String get baseUrl {
+    if (customBaseUrl.isNotEmpty) return customBaseUrl;
+    if (_confirmedWorkingBaseUrl != null) return _confirmedWorkingBaseUrl!;
+    if (kIsWeb) return 'http://localhost:\$defaultPort/api';
+    return candidateUrls.first;
+  }
+
+  /// Establece la URL que respondió exitosamente
+  static void setWorkingUrl(String url) {
+    _confirmedWorkingBaseUrl = url;
+  }
+
+  /// Alterna automáticamente al endpoint de respaldo si el actual falló
+  static String getAlternativeUrl(String failedUrl) {
+    if (failedUrl.contains('localhost')) {
+      return failedUrl.replaceFirst('localhost', '10.0.2.2');
+    } else if (failedUrl.contains('10.0.2.2')) {
+      return failedUrl.replaceFirst('10.0.2.2', 'localhost');
+    }
+    return failedUrl;
+  }
+
+  /// Obtiene la URL de Ollama Local evaluando los mismos casos
   static String get ollamaUrl {
-    if (customOllamaUrl.isNotEmpty) {
-      return customOllamaUrl;
-    }
-
-    if (kIsWeb) {
-      return 'http://localhost:\$ollamaPort/api/generate';
-    }
-
-    return 'http://10.0.2.2:\$ollamaPort/api/generate';
+    if (customOllamaUrl.isNotEmpty) return customOllamaUrl;
+    final isEmulator = baseUrl.contains('10.0.2.2');
+    return isEmulator
+        ? 'http://10.0.2.2:\$ollamaPort/api/generate'
+        : 'http://localhost:\$ollamaPort/api/generate';
   }
 
   /// Modelo de IA local sugerido para Ollama
@@ -368,10 +390,11 @@ ${toJsonAssignments}
 }
 
 /**
- * Genera el cliente API lib/services/api_service.dart
+ * Genera el cliente API lib/services/api_service.dart con auto-reintento resiliente
  */
 function generateApiService(classes: ParsedFlutterClass[]): string {
   return `import 'dart:convert';
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import '../config/api_config.dart';
 
@@ -396,111 +419,135 @@ class ApiResponse {
 
 /// Servicio cliente para interactuar con los endpoints del Backend Spring Boot
 class ApiService {
-  /// Obtener el catálogo global de esquemas del backend
+  /// Obtener el catálogo global de esquemas del backend (con reintento automático)
   static Future<Map<String, dynamic>> fetchSchemaCatalog() async {
-    try {
-      final response = await http.get(
-        Uri.parse('\${ApiConfig.baseUrl}/schemas'),
-        headers: {'Accept': 'application/json'},
-      ).timeout(const Duration(seconds: 5));
+    for (final candidate in ApiConfig.candidateUrls) {
+      try {
+        final response = await http.get(
+          Uri.parse('\$candidate/schemas'),
+          headers: {'Accept': 'application/json'},
+        ).timeout(const Duration(seconds: 4));
 
-      if (response.statusCode == 200) {
-        return json.decode(utf8.decode(response.bodyBytes)) as Map<String, dynamic>;
+        if (response.statusCode == 200) {
+          ApiConfig.setWorkingUrl(candidate);
+          return json.decode(utf8.decode(response.bodyBytes)) as Map<String, dynamic>;
+        }
+      } catch (_) {
+        // Prueba el siguiente candidato automáticamente
       }
-      return {'error': 'HTTP \${response.statusCode}: No se pudo cargar el catálogo de esquemas.'};
-    } catch (e) {
-      return {'error': 'Error de conexión con el backend: \$e'};
+    }
+    return {'error': 'No se pudo conectar con el backend en ningún endpoint (localhost / 10.0.2.2).'};
+  }
+
+  /// Helper interno para ejecutar petición HTTP
+  static Future<http.Response> _sendHttpRequest(
+    String method,
+    Uri uri,
+    Map<String, String> headers,
+    Map<String, dynamic>? body,
+  ) async {
+    final upperMethod = method.toUpperCase();
+    switch (upperMethod) {
+      case 'GET':
+        return await http.get(uri, headers: headers).timeout(const Duration(seconds: 5));
+      case 'POST':
+        return await http.post(uri, headers: headers, body: json.encode(body ?? {})).timeout(const Duration(seconds: 5));
+      case 'PUT':
+        return await http.put(uri, headers: headers, body: json.encode(body ?? {})).timeout(const Duration(seconds: 5));
+      case 'DELETE':
+        return await http.delete(uri, headers: headers).timeout(const Duration(seconds: 5));
+      default:
+        throw Exception('Método HTTP no soportado: \$method');
     }
   }
 
-  /// Ejecuta una acción REST dinámica deducida por la IA
+  /// Ejecuta una acción REST dinámica deducida por la IA (con auto-conmutación si falla)
   static Future<ApiResponse> executeRequest({
     required String method,
     required String endpoint,
     Map<String, dynamic>? body,
   }) async {
     final cleanEndpoint = endpoint.startsWith('/') ? endpoint : '/\$endpoint';
-    // Si el endpoint ya contiene /api, no duplicarlo
-    final fullUrl = cleanEndpoint.startsWith('/api') 
-        ? '\${ApiConfig.baseUrl.replaceAll(RegExp(r'/api\$'), '')}\$cleanEndpoint'
-        : '\${ApiConfig.baseUrl}\$cleanEndpoint';
-
-    final uri = Uri.parse(fullUrl);
     final headers = {
       'Content-Type': 'application/json',
       'Accept': 'application/json',
     };
 
+    String activeBase = ApiConfig.baseUrl;
+    String fullUrl = cleanEndpoint.startsWith('/api')
+        ? '\${activeBase.replaceAll(RegExp(r'/api\$'), '')}\$cleanEndpoint'
+        : '\$activeBase\$cleanEndpoint';
+
+    http.Response? response;
+    String? lastError;
+
+    // Intento 1: con el endpoint base actual
     try {
-      http.Response response;
-      final upperMethod = method.toUpperCase();
-
-      switch (upperMethod) {
-        case 'GET':
-          response = await http.get(uri, headers: headers).timeout(const Duration(seconds: 8));
-          break;
-        case 'POST':
-          response = await http.post(uri, headers: headers, body: json.encode(body ?? {})).timeout(const Duration(seconds: 8));
-          break;
-        case 'PUT':
-          response = await http.put(uri, headers: headers, body: json.encode(body ?? {})).timeout(const Duration(seconds: 8));
-          break;
-        case 'DELETE':
-          response = await http.delete(uri, headers: headers).timeout(const Duration(seconds: 8));
-          break;
-        default:
-          return ApiResponse(
-            success: false,
-            statusCode: 400,
-            message: 'Método HTTP no soportado: \$method',
-            endpoint: fullUrl,
-            method: method,
-          );
-      }
-
-      final isSuccess = response.statusCode >= 200 && response.statusCode < 300;
-      dynamic parsedData;
-      
-      if (response.body.isNotEmpty) {
+      response = await _sendHttpRequest(method, Uri.parse(fullUrl), headers, body);
+      ApiConfig.setWorkingUrl(activeBase);
+    } catch (e1) {
+      lastError = e1.toString();
+      // Intento 2: Conmutar automáticamente entre localhost y 10.0.2.2
+      final alternativeBase = ApiConfig.getAlternativeUrl(activeBase);
+      if (alternativeBase != activeBase) {
+        final altFullUrl = cleanEndpoint.startsWith('/api')
+            ? '\${alternativeBase.replaceAll(RegExp(r'/api\$'), '')}\$cleanEndpoint'
+            : '\$alternativeBase\$cleanEndpoint';
         try {
-          parsedData = json.decode(utf8.decode(response.bodyBytes));
-        } catch (_) {
-          parsedData = response.body;
+          response = await _sendHttpRequest(method, Uri.parse(altFullUrl), headers, body);
+          ApiConfig.setWorkingUrl(alternativeBase);
+          fullUrl = altFullUrl;
+        } catch (e2) {
+          lastError = e2.toString();
         }
       }
+    }
 
-      String message;
-      if (isSuccess) {
-        if (upperMethod == 'POST') {
-          message = '✅ Registro creado exitosamente en el servidor.';
-        } else if (upperMethod == 'PUT') {
-          message = '✅ Registro actualizado correctamente.';
-        } else if (upperMethod == 'DELETE') {
-          message = '✅ Registro eliminado correctamente.';
-        } else {
-          message = '✅ Consulta ejecutada con éxito.';
-        }
-      } else {
-        message = '⚠️ El servidor respondió con estado \${response.statusCode}';
-      }
-
-      return ApiResponse(
-        success: isSuccess,
-        statusCode: response.statusCode,
-        message: message,
-        data: parsedData,
-        endpoint: fullUrl,
-        method: upperMethod,
-      );
-    } catch (e) {
+    if (response == null) {
       return ApiResponse(
         success: false,
         statusCode: 0,
-        message: '❌ Error de conexión al backend (\${ApiConfig.baseUrl}): \$e',
+        message: '❌ No se pudo conectar con el backend en \${ApiConfig.baseUrl}. Verifica que Spring Boot esté ejecutándose y que tengas activado adb reverse.',
         endpoint: fullUrl,
         method: method,
       );
     }
+
+    final isSuccess = response.statusCode >= 200 && response.statusCode < 300;
+    dynamic parsedData;
+    
+    if (response.body.isNotEmpty) {
+      try {
+        parsedData = json.decode(utf8.decode(response.bodyBytes));
+      } catch (_) {
+        parsedData = response.body;
+      }
+    }
+
+    String message;
+    final upperMethod = method.toUpperCase();
+    if (isSuccess) {
+      if (upperMethod == 'POST') {
+        message = '✅ Registro creado exitosamente en el servidor.';
+      } else if (upperMethod == 'PUT') {
+        message = '✅ Registro actualizado correctamente.';
+      } else if (upperMethod == 'DELETE') {
+        message = '✅ Registro eliminado correctamente.';
+      } else {
+        message = '✅ Consulta ejecutada con éxito.';
+      }
+    } else {
+      message = '⚠️ El servidor respondió con estado \${response.statusCode}';
+    }
+
+    return ApiResponse(
+      success: isSuccess,
+      statusCode: response.statusCode,
+      message: message,
+      data: parsedData,
+      endpoint: fullUrl,
+      method: upperMethod,
+    );
   }
 }
 `;

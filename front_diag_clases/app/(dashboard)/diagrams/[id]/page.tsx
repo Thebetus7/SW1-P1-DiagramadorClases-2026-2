@@ -25,6 +25,7 @@ import { UmlNoteNode } from "@/components/canvas/UmlNoteNode";
 import { UmlEdge } from "@/components/canvas/UmlEdge";
 import { UmlEdgeMarkers } from "@/components/canvas/UmlEdgeMarkers";
 import { ClassEditModal } from "@/components/canvas/ClassEditModal";
+import { NoteEditModal } from "@/components/canvas/NoteEditModal";
 import { RelationTypePickerModal } from "@/components/canvas/RelationTypePickerModal";
 import { EdgeEditModal } from "@/components/canvas/EdgeEditModal";
 import { CodePreviewModal } from "@/components/canvas/CodePreviewModal";
@@ -46,6 +47,7 @@ import {
   DiagramResponse,
   UmlClassData,
   UmlEdgeData,
+  UmlNoteData,
   UmlRelationType,
   User,
   WebSocketMessage,
@@ -98,6 +100,11 @@ function DiagramEditorContent() {
   const [editingNodeId, setEditingNodeId] = useState<string | null>(null);
   const [editingNodeData, setEditingNodeData] = useState<UmlClassData | null>(null);
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+
+  // Modal de edición de nota
+  const [editingNoteId, setEditingNoteId] = useState<string | null>(null);
+  const [editingNoteData, setEditingNoteData] = useState<UmlNoteData | null>(null);
+  const [isNoteEditModalOpen, setIsNoteEditModalOpen] = useState(false);
 
   // Modal selector de tipo de relación (al conectar)
   const [isRelationPickerOpen, setIsRelationPickerOpen] = useState(false);
@@ -180,6 +187,13 @@ function DiagramEditorContent() {
     setIsEditModalOpen(true);
   }, []);
 
+  // Handler para abrir modal de edición de una nota
+  const handleOpenEditNote = useCallback((nodeId: string, noteData: UmlNoteData) => {
+    setEditingNoteId(nodeId);
+    setEditingNoteData(noteData);
+    setIsNoteEditModalOpen(true);
+  }, []);
+
   // Limpieza periódica de cursores inactivos
   useEffect(() => {
     const timer = setInterval(() => {
@@ -232,7 +246,7 @@ function DiagramEditorContent() {
               ...node,
               data: {
                 ...node.data,
-                onEdit: handleOpenEditClass,
+                onEdit: node.type === "umlNote" ? handleOpenEditNote : handleOpenEditClass,
               },
             }));
 
@@ -261,7 +275,7 @@ function DiagramEditorContent() {
     };
 
     fetchDiagram();
-  }, [currentUser, diagramId, handleOpenEditClass]);
+  }, [currentUser, diagramId, handleOpenEditClass, handleOpenEditNote]);
 
   // Conectar WebSockets para Colaboración en Tiempo Real
   useEffect(() => {
@@ -363,7 +377,10 @@ function DiagramEditorContent() {
                           data: {
                             ...existing.data,
                             ...remoteNode.data,
-                            onEdit: handleOpenEditClass,
+                            onEdit:
+                              existing.type === "umlNote" || remoteNode.type === "umlNote"
+                                ? handleOpenEditNote
+                                : handleOpenEditClass,
                           },
                         };
                         changed = true;
@@ -377,7 +394,10 @@ function DiagramEditorContent() {
                       ...remoteNode,
                       data: {
                         ...remoteNode.data,
-                        onEdit: handleOpenEditClass,
+                        onEdit:
+                          remoteNode.type === "umlNote"
+                            ? handleOpenEditNote
+                            : handleOpenEditClass,
                       },
                     });
                     changed = true;
@@ -419,7 +439,7 @@ function DiagramEditorContent() {
     return () => {
       // wsService.disconnect();
     };
-  }, [currentUser, diagramId, diagram?.idCreador, handleOpenEditClass]);
+  }, [currentUser, diagramId, diagram?.idCreador, handleOpenEditClass, handleOpenEditNote]);
 
   // Autoguardado debounced en la base de datos (REST PUT)
   const triggerAutoSave = useCallback(
@@ -751,10 +771,31 @@ function DiagramEditorContent() {
       },
       data: {
         content: "Nota UML explicativa.",
+        onEdit: handleOpenEditNote,
       },
     };
 
     const nextNodes = [...nodes, newNode];
+    setNodes(nextNodes);
+    broadcastCanvas(nextNodes, edges);
+  };
+
+  // Guardar cambios en el modal de edición de nota
+  const handleSaveNoteEdit = (nodeId: string, content: string) => {
+    const nextNodes = nodes.map((node) => {
+      if (node.id === nodeId) {
+        return {
+          ...node,
+          data: {
+            ...node.data,
+            content,
+            onEdit: handleOpenEditNote,
+          },
+        };
+      }
+      return node;
+    });
+
     setNodes(nextNodes);
     broadcastCanvas(nextNodes, edges);
   };
@@ -873,19 +914,14 @@ function DiagramEditorContent() {
         diagram?.nombre || "diagrama"
       );
 
-      // Inyectar callback onEdit en los nodos de clase
-      const nextNodes = result.nodes.map((node) => {
-        if (node.type === "umlClass") {
-          return {
-            ...node,
-            data: {
-              ...node.data,
-              onEdit: handleOpenEditClass,
-            },
-          };
-        }
-        return node;
-      });
+      // Inyectar callback onEdit en los nodos de clase y nota
+      const nextNodes = result.nodes.map((node) => ({
+        ...node,
+        data: {
+          ...node.data,
+          onEdit: node.type === "umlNote" ? handleOpenEditNote : handleOpenEditClass,
+        },
+      }));
 
       setNodes(nextNodes);
       setEdges(result.edges);
@@ -998,6 +1034,20 @@ function DiagramEditorContent() {
         initialData={editingNodeData}
         onClose={() => setIsEditModalOpen(false)}
         onSave={handleSaveClassEdit}
+        onDeleteNode={handleDeleteNode}
+      />
+
+      {/* Modal para editar Notas */}
+      <NoteEditModal
+        isOpen={isNoteEditModalOpen}
+        nodeId={editingNoteId}
+        initialData={editingNoteData}
+        onClose={() => {
+          setIsNoteEditModalOpen(false);
+          setEditingNoteId(null);
+          setEditingNoteData(null);
+        }}
+        onSave={handleSaveNoteEdit}
         onDeleteNode={handleDeleteNode}
       />
 

@@ -232,7 +232,7 @@ export default function DiagramsPage() {
       const result = await convertImageToDiagramWithGemini(base64Data, mimeType);
 
       if (!result.nodes || result.nodes.length === 0) {
-        alert("No se detectaron clases en la imagen proporcionada. Por favor intenta con una imagen más nítida, con mejor iluminación o mayor contraste.");
+        alert("No se detectaron clases o notas UML en la imagen proporcionada. Por favor intenta con una imagen más nítida, con mejor iluminación o mayor contraste.");
         return;
       }
 

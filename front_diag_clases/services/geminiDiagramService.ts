@@ -668,9 +668,9 @@ Tu misión es analizar exhaustivamente la imagen proporcionada (que puede ser un
      * Estructura requerida: { "visibility": "+"|"-"|"#"|"~", "name": "nombre", "parameters": "...", "returnType": "..." }
 
 2. NOTAS Y COMENTARIOS UML:
-   - Identifica cajas de notas (esquina doblada) y extrae su texto en { "type": "umlNote", "content": "..." }.
+   - Identifica cajas de notas (esquina doblada o rectángulo con texto explicativo) y extrae su texto en { "id": "note-1", "type": "umlNote", "content": "..." }.
 
-3. TODAS LAS RELACIONES ENTRE CLASES (ARISTAS):
+3. TODAS LAS RELACIONES ENTRE CLASES Y NOTAS (ARISTAS):
    - Reconoce las líneas que conectan clases y su semántica UML exacta:
      * "ASSOCIATION": Línea sólida simple sin flecha.
      * "DIRECTED_ASSOCIATION": Línea sólida con flecha abierta en la punta (►).
@@ -679,8 +679,9 @@ Tu misión es analizar exhaustivamente la imagen proporcionada (que puede ser un
      * "AGGREGATION": Agregación con rombo hueco blanco (◇).
      * "COMPOSITION": Composición con rombo relleno negro (◆).
      * "DEPENDENCY": Dependencia con línea punteada y flecha abierta (- - ►).
-   - "source": Nombre o ID de la clase origen.
-   - "target": Nombre o ID de la clase destino.
+   - Para líneas punteadas o anclajes que conectan una nota a una clase (NoteLink), usa relationType: "DEPENDENCY" o "ASSOCIATION".
+   - "source": Nombre o ID de la clase/nota origen.
+   - "target": Nombre o ID de la clase/nota destino.
    - "sourceMultiplicity": Multiplicidad cerca del origen (ej: "1", "0..1", "1..*", "*").
    - "targetMultiplicity": Multiplicidad cerca del destino (ej: "1", "0..1", "1..*", "*").
    - "name": Nombre o verbo de la relación si aparece sobre o junto a la línea (ej: "contiene", "genera", "pertenece").
@@ -706,6 +707,11 @@ Tu misión es analizar exhaustivamente la imagen proporcionada (que puede ser un
       "methods": [
         { "visibility": "+", "name": "calcularTotal", "parameters": "descuento: double", "returnType": "double" }
       ]
+    },
+    {
+      "id": "note-1",
+      "type": "umlNote",
+      "content": "Regla de negocio o nota explicativa detectada en la imagen"
     }
   ],
   "edges": [

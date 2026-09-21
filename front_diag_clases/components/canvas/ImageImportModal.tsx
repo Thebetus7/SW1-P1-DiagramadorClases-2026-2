@@ -32,7 +32,7 @@ export function ImageImportModal({
   const [activeTab, setActiveTab] = useState<TabMode>("file");
   const [previewSrc, setPreviewSrc] = useState<string | null>(null);
   const [capturedBase64, setCapturedBase64] = useState<string | null>(null);
-  const [capturedMimeType, setCapturedMimeType] = useState<string>("image/png");
+  const [capturedMimeType, setCapturedMimeType] = useState<string>("image/jpeg");
   const [isCameraActive, setIsCameraActive] = useState(false);
   const [isStartingCamera, setIsStartingCamera] = useState(false);
   const [cameraError, setCameraError] = useState<string | null>(null);
@@ -138,24 +138,28 @@ export function ImageImportModal({
     }
   }, [activeTab, isOpen, previewSrc, startCamera, stopCamera]);
 
-  // Capturar fotograma de la cámara
+  // Capturar fotograma de la cámara (convertido a JPG con calidad óptima)
   const capturePhoto = () => {
     if (!videoRef.current || !canvasRef.current) return;
 
     const video = videoRef.current;
     const canvas = canvasRef.current;
-    canvas.width = video.videoWidth || 640;
-    canvas.height = video.videoHeight || 480;
+    canvas.width = video.videoWidth || 1280;
+    canvas.height = video.videoHeight || 720;
 
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
 
+    // Rellenar con fondo blanco por seguridad
+    ctx.fillStyle = "#FFFFFF";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
     ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-    const dataUrl = canvas.toDataURL("image/png");
+
+    const dataUrl = canvas.toDataURL("image/jpeg", 0.90);
 
     setPreviewSrc(dataUrl);
     setCapturedBase64(dataUrl.split(",")[1]);
-    setCapturedMimeType("image/png");
+    setCapturedMimeType("image/jpeg");
     stopCamera();
   };
 
@@ -166,10 +170,69 @@ export function ImageImportModal({
     startCamera();
   };
 
-  // Procesar archivo de imagen
-  const processImageFile = (file: File) => {
+  // Convierte cualquier formato de imagen (PNG, WEBP, BMP, etc.) a JPG estandarizado y optimizado con fondo blanco
+  const convertImageToStandardJpg = (
+    fileOrDataUrl: File | string
+  ): Promise<{ dataUrl: string; base64: string }> => {
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => {
+        let width = img.width || 1280;
+        let height = img.height || 720;
+        const maxDim = 1920;
+
+        // Escalar proporcionalmente si sobrepasa 1920px para máxima nitidez y ligereza
+        if (width > maxDim || height > maxDim) {
+          if (width > height) {
+            height = Math.round((height * maxDim) / width);
+            width = maxDim;
+          } else {
+            width = Math.round((width * maxDim) / height);
+            height = maxDim;
+          }
+        }
+
+        const canvas = document.createElement("canvas");
+        canvas.width = width;
+        canvas.height = height;
+
+        const ctx = canvas.getContext("2d");
+        if (!ctx) {
+          reject(new Error("No se pudo obtener el contexto del canvas"));
+          return;
+        }
+
+        // Rellenar fondo blanco (esencial para convertir PNG transparentes a JPG sin manchas negras)
+        ctx.fillStyle = "#FFFFFF";
+        ctx.fillRect(0, 0, width, height);
+        ctx.drawImage(img, 0, 0, width, height);
+
+        // Convertir obligatoriamente a image/jpeg (90% calidad)
+        const jpgDataUrl = canvas.toDataURL("image/jpeg", 0.90);
+        const base64Clean = jpgDataUrl.split(",")[1];
+
+        resolve({ dataUrl: jpgDataUrl, base64: base64Clean });
+      };
+
+      img.onerror = (err) => reject(err);
+
+      if (typeof fileOrDataUrl === "string") {
+        img.src = fileOrDataUrl;
+      } else {
+        const reader = new FileReader();
+        reader.onload = (e) => {
+          img.src = e.target?.result as string;
+        };
+        reader.onerror = (e) => reject(e);
+        reader.readAsDataURL(fileOrDataUrl);
+      }
+    });
+  };
+
+  // Procesar archivo de imagen (transformándolo a JPG automáticamente)
+  const processImageFile = async (file: File) => {
     if (!file.type.startsWith("image/")) {
-      alert("Por favor selecciona un archivo de imagen válido (PNG, JPG, WEBP).");
+      alert("Por favor selecciona un archivo de imagen válido (PNG, JPG, JPEG, WEBP, BMP).");
       return;
     }
 
@@ -181,14 +244,23 @@ export function ImageImportModal({
       }
     }
 
-    const reader = new FileReader();
-    reader.onload = () => {
-      const result = reader.result as string;
-      setPreviewSrc(result);
-      setCapturedBase64(result.split(",")[1]);
-      setCapturedMimeType(file.type || "image/png");
-    };
-    reader.readAsDataURL(file);
+    try {
+      // Transformar automáticamente cualquier formato (PNG, WEBP, etc.) a JPG ligero y nítido para la IA
+      const { dataUrl, base64 } = await convertImageToStandardJpg(file);
+      setPreviewSrc(dataUrl);
+      setCapturedBase64(base64);
+      setCapturedMimeType("image/jpeg");
+    } catch (err) {
+      console.warn("Aviso al convertir a JPG mediante canvas, usando FileReader estándar:", err);
+      const reader = new FileReader();
+      reader.onload = () => {
+        const result = reader.result as string;
+        setPreviewSrc(result);
+        setCapturedBase64(result.split(",")[1]);
+        setCapturedMimeType("image/jpeg");
+      };
+      reader.readAsDataURL(file);
+    }
   };
 
   // Manejo de input de archivo
