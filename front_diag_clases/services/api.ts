@@ -1,18 +1,28 @@
 import { User, DiagramResponse, Collaborator } from "@/types";
 
 function getApiBaseUrl(): string {
-  if (process.env.NEXT_PUBLIC_API_URL) {
-    return process.env.NEXT_PUBLIC_API_URL;
-  }
   if (typeof window !== "undefined") {
-    const port = window.location.port;
-    if (!port || port === "80" || port === "443") {
-      return "/api";
-    }
     const host = window.location.hostname;
+    const port = window.location.port;
+
+    // En producción o detrás de proxy inverso (puertos 80 o 443)
+    if (!port || port === "80" || port === "443") {
+      return process.env.NEXT_PUBLIC_API_URL?.startsWith("http")
+        ? process.env.NEXT_PUBLIC_API_URL
+        : "/api";
+    }
+
+    // Si hay una URL externa explícita configurada (que no sea localhost)
+    const envUrl = process.env.NEXT_PUBLIC_API_URL;
+    if (envUrl && !envUrl.includes("localhost") && !envUrl.includes("127.0.0.1")) {
+      return envUrl;
+    }
+
+    // En desarrollo local/red (puerto 3000 u otro), conectar dinámicamente al mismo host en el puerto 8080
     return `http://${host}:8080/api`;
   }
-  return "http://localhost:8080/api";
+
+  return process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080/api";
 }
 
 async function handleResponse<T>(resPromise: Promise<Response>): Promise<T> {
@@ -36,13 +46,20 @@ export const api = {
   async checkHealth(): Promise<boolean> {
     try {
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 2500);
-      const res = await fetch(`${getApiBaseUrl()}/auth/quick-users`, {
+      const timeoutId = setTimeout(() => controller.abort(), 3000);
+      const baseUrl = getApiBaseUrl();
+      const res = await fetch(`${baseUrl}/auth/health`, {
         signal: controller.signal,
         cache: "no-store",
-      });
+      }).catch(() => null);
       clearTimeout(timeoutId);
-      return res.ok;
+      if (res && res.ok) return true;
+
+      // Fallback secundario a quick-users si health no respondiera
+      const res2 = await fetch(`${baseUrl}/auth/quick-users`, {
+        cache: "no-store",
+      }).catch(() => null);
+      return Boolean(res2 && res2.ok);
     } catch {
       return false;
     }

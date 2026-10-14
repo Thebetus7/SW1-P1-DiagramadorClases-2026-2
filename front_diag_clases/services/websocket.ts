@@ -18,16 +18,27 @@ export class DiagramWebSocketService {
     }
 
     const getWsUrl = () => {
-      if (process.env.NEXT_PUBLIC_WS_URL) return process.env.NEXT_PUBLIC_WS_URL;
       if (typeof window !== "undefined") {
+        const host = window.location.hostname;
         const port = window.location.port;
+
+        // En producción o detrás de proxy inverso (puertos 80 o 443)
         if (!port || port === "80" || port === "443") {
           const proto = window.location.protocol === "https:" ? "https:" : "http:";
           return `${proto}//${window.location.host}/ws`;
         }
-        return `http://${window.location.hostname}:8080/ws`;
+
+        // Si hay una URL externa explícita configurada (que no sea localhost)
+        const envWs = process.env.NEXT_PUBLIC_WS_URL;
+        if (envWs && !envWs.includes("localhost") && !envWs.includes("127.0.0.1")) {
+          return envWs;
+        }
+
+        // En desarrollo local/red (puerto 3000 u otro), conectar dinámicamente al mismo host en el puerto 8080
+        return `http://${host}:8080/ws`;
       }
-      return "http://localhost:8080/ws";
+
+      return process.env.NEXT_PUBLIC_WS_URL || "http://localhost:8080/ws";
     };
 
     const socketUrl = getWsUrl();
