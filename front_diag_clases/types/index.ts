@@ -52,13 +52,36 @@ export type UmlRelationType =
   | "REALIZATION"
   | "AGGREGATION"
   | "COMPOSITION"
-  | "DEPENDENCY";
+  | "DEPENDENCY"
+  | "ASSOCIATION_CLASS";
 
 export interface UmlEdgeData {
   relationType: UmlRelationType;
   sourceMultiplicity?: string;
   targetMultiplicity?: string;
   name?: string;
+  isAssociationClass?: boolean;
+  targetEdgeId?: string;
+  sourceClassId?: string;
+  targetClassId?: string;
+  intermediateNodeId?: string;
+}
+
+export type ImportCanvasMode = "REPLACE" | "MERGE";
+
+export interface UmlAssociationEdgeData extends UmlEdgeData {
+  isAssociationClass: boolean;
+  targetEdgeId: string;
+  sourceClassId: string;
+  targetClassId: string;
+  intermediateNodeId: string;
+}
+
+export interface UmlAssociationClassConnection {
+  associationEdgeId: string;
+  intermediateClassId: string;
+  sourceClassId?: string;
+  targetClassId?: string;
 }
 
 export interface UmlClassData {

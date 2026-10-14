@@ -1,11 +1,12 @@
 "use client";
 
 import React from "react";
-import { Plus, StickyNote, Download, FileCode, Eye, Wifi, Server, Sparkles, Smartphone } from "lucide-react";
+import { Plus, StickyNote, Download, FileCode, Eye, Wifi, Server, Sparkles, Smartphone, Image as ImageIcon } from "lucide-react";
 
 interface CanvasToolbarProps {
   onAddClass: () => void;
   onAddNote: () => void;
+  onOpenImageImport: () => void;
   onOpenPreview: () => void;
   onOpenSpringBootExport: () => void;
   onOpenFlutterExport: () => void;
@@ -15,6 +16,7 @@ interface CanvasToolbarProps {
 export function CanvasToolbar({
   onAddClass,
   onAddNote,
+  onOpenImageImport,
   onOpenPreview,
   onOpenSpringBootExport,
   onOpenFlutterExport,
@@ -38,6 +40,18 @@ export function CanvasToolbar({
       >
         <StickyNote className="w-3.5 h-3.5 text-amber-600" />
         Añadir Nota
+      </button>
+
+      <div className="h-4 w-px bg-slate-200" />
+
+      {/* Botón Importar Imagen con Gemini Vision */}
+      <button
+        onClick={onOpenImageImport}
+        title="Importar imagen o boceto con Gemini Vision (Reemplazar o Fusionar)"
+        className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-semibold text-purple-700 bg-purple-50/80 hover:bg-purple-100 rounded transition-colors border border-purple-200"
+      >
+        <ImageIcon className="w-3.5 h-3.5 text-purple-600" />
+        Importar Imagen
       </button>
 
       <div className="h-4 w-px bg-slate-200" />

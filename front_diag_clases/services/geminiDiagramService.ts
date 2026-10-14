@@ -63,6 +63,9 @@ export function normalizeRelationType(rel: any): UmlRelationType {
     DEPENDENCY: "DEPENDENCY",
     DEPENDENCIA: "DEPENDENCY",
     USO: "DEPENDENCY",
+    ASSOCIATION_CLASS: "ASSOCIATION_CLASS",
+    CLASE_DE_ASOCIACION: "ASSOCIATION_CLASS",
+    CLASE_ASOCIATIVA: "ASSOCIATION_CLASS",
   };
   if (typeof rel === "string") {
     const upper = rel.toUpperCase().replace(/[\s-]+/g, "_").trim();
@@ -539,10 +542,28 @@ Tu tarea es analizar el estado actual del diagrama UML en formato JSON y modific
    - source: ID de la clase/nota origen
    - target: ID de la clase/nota destino
    - data:
-     * relationType: "ASSOCIATION" | "DIRECTED_ASSOCIATION" | "GENERALIZATION" | "REALIZATION" | "AGGREGATION" | "COMPOSITION" | "DEPENDENCY"
+     * relationType: "ASSOCIATION" | "DIRECTED_ASSOCIATION" | "GENERALIZATION" | "REALIZATION" | "AGGREGATION" | "COMPOSITION" | "DEPENDENCY" | "ASSOCIATION_CLASS"
      * sourceMultiplicity: string opcional ("1", "0..1", "1..*", "*")
      * targetMultiplicity: string opcional ("1", "0..1", "1..*", "*")
      * name: string opcional (verbo o rol de la relación)
+
+4. CLASES DE ASOCIACIÓN EN 'T' (UML 2.5):
+   - Cuando se describa una relación muchos a muchos con atributos propios (ej: "Usuario y Diagrama tienen Colaborador con rol", "Estudiante y Curso con Inscripcion"):
+     * Modela la clase intermedia con sus atributos (type: "umlClass").
+     * Modela la relación base directa entre las dos clases padre (type: "umlEdge").
+     * Conecta la clase intermedia a la relación base usando:
+       type: "umlAssociationClassEdge",
+       source: idClaseIntermedia,
+       target: idClasePadre1,
+       data: {
+         relationType: "ASSOCIATION_CLASS",
+         isAssociationClass: true,
+         targetEdgeId: idAristaBase,
+         sourceClassId: idClasePadre1,
+         targetClassId: idClasePadre2,
+         intermediateNodeId: idClaseIntermedia,
+         name: ""
+       }
 
 ### FORMATO JSON REQUERIDO DE RESPUESTA:
 {
@@ -679,6 +700,7 @@ Tu misión es analizar exhaustivamente la imagen proporcionada (que puede ser un
      * "AGGREGATION": Agregación con rombo hueco blanco (◇).
      * "COMPOSITION": Composición con rombo relleno negro (◆).
      * "DEPENDENCY": Dependencia con línea punteada y flecha abierta (- - ►).
+     * "ASSOCIATION_CLASS": Conector en 'T' de clase de asociación con línea discontinua perpendicular que ancla una clase intermedia a una arista existente entre dos entidades. Usa type: "umlAssociationClassEdge" indicando targetEdgeId, sourceClassId, targetClassId e intermediateNodeId.
    - Para líneas punteadas o anclajes que conectan una nota a una clase (NoteLink), usa relationType: "DEPENDENCY" o "ASSOCIATION".
    - "source": Nombre o ID de la clase/nota origen.
    - "target": Nombre o ID de la clase/nota destino.

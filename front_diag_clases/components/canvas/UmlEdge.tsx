@@ -1,6 +1,6 @@
 "use client";
 
-import React, { memo } from "react";
+import React, { memo, useState } from "react";
 import {
   BaseEdge,
   EdgeLabelRenderer,
@@ -42,11 +42,14 @@ function UmlEdgeComponent({
   data,
   selected,
 }: EdgeProps) {
+  const [isHovered, setIsHovered] = useState(false);
+
   const edgeData = data as UmlEdgeData | undefined;
   const relType: UmlRelationType = edgeData?.relationType || "ASSOCIATION";
   const sourceMultiplicity = edgeData?.sourceMultiplicity;
   const targetMultiplicity = edgeData?.targetMultiplicity;
   const relationName = edgeData?.name;
+  const hasAssociationClass = Boolean(edgeData?.isAssociationClass);
 
   const [edgePath, labelX, labelY] = getSmoothStepPath({
     sourceX,
@@ -62,8 +65,10 @@ function UmlEdgeComponent({
   let markerStart: string | undefined = undefined;
   let markerEnd: string | undefined = undefined;
   let strokeDasharray: string | undefined = undefined;
-  let strokeColor = selected ? "#2563eb" : "#334155";
-  let strokeWidth = selected ? 2 : 1.5;
+  
+  // Resaltado: si está hovered o seleccionado
+  let strokeColor = isHovered ? "#4f46e5" : selected ? "#2563eb" : "#334155";
+  let strokeWidth = isHovered ? 2.5 : selected ? 2 : 1.5;
 
   switch (relType) {
     case "GENERALIZATION":
@@ -103,6 +108,20 @@ function UmlEdgeComponent({
 
   return (
     <>
+      {/* 1. Hitbox magnético invisible expandido (24px) para captura ultra-suave de hover y drag */}
+      <path
+        d={edgePath}
+        fill="none"
+        stroke="transparent"
+        strokeWidth={24}
+        className="cursor-pointer"
+        style={{ pointerEvents: "all" }}
+        onMouseEnter={() => setIsHovered(true)}
+        onMouseLeave={() => setIsHovered(false)}
+        data-edge-id={id}
+      />
+
+      {/* 2. Trazo visible de la arista UML */}
       <BaseEdge
         id={id}
         path={edgePath}
@@ -114,9 +133,24 @@ function UmlEdgeComponent({
           strokeWidth,
           strokeDasharray,
           transition: "stroke 0.15s ease, stroke-width 0.15s ease",
+          pointerEvents: "none",
         }}
       />
 
+      {/* 3. Punto magnético central circular cuando se sobrevuela con el cursor */}
+      {isHovered && (
+        <circle
+          cx={labelX}
+          cy={labelY}
+          r={5.5}
+          fill="#4f46e5"
+          stroke="#ffffff"
+          strokeWidth={2}
+          className="animate-pulse pointer-events-none z-20 shadow-md"
+        />
+      )}
+
+      {/* 4. Etiquetas de Multiplicidad y Nombre de la relación */}
       <EdgeLabelRenderer>
         {/* Multiplicidad de Origen */}
         {sourceMultiplicity && (
@@ -147,7 +181,7 @@ function UmlEdgeComponent({
         )}
 
         {/* Nombre / Estereotipo de la relación en el centro */}
-        {relationName && (
+        {relationName && !isHovered && (
           <div
             style={{
               position: "absolute",

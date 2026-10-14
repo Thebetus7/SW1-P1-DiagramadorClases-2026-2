@@ -146,6 +146,12 @@ export interface ParsedClass {
   primaryKeyAttr: ParsedAttribute;
   incomingRelations: ParsedRelationship[];
   outgoingRelations: ParsedRelationship[];
+  associationEndpoints?: {
+    sourceClassName: string;
+    sourceCamelName: string;
+    targetClassName: string;
+    targetCamelName: string;
+  };
 }
 
 /**
@@ -289,6 +295,29 @@ export function parseCanvasData(nodes: Node[], edges: Edge[]): { classes: Parsed
       relations.push(rel);
       sourceClass.outgoingRelations.push(rel);
       targetClass.incomingRelations.push(rel);
+    }
+  }
+
+  // 3. Extraer Clases de Asociación en 'T' (UML 2.5)
+  for (const edge of edges) {
+    const edgeData = ((edge.data || {}) as unknown) as UmlEdgeData;
+    if (edge.type === "umlAssociationClassEdge" || edgeData.isAssociationClass) {
+      const intermediateId = edgeData.intermediateNodeId || edge.source;
+      const intermediateClass = classMap.get(intermediateId);
+      const sourceClassId = edgeData.sourceClassId;
+      const targetClassId = edgeData.targetClassId;
+
+      const sourceClass = sourceClassId ? classMap.get(sourceClassId) : undefined;
+      const targetClass = targetClassId ? classMap.get(targetClassId) : undefined;
+
+      if (intermediateClass && sourceClass && targetClass) {
+        intermediateClass.associationEndpoints = {
+          sourceClassName: sourceClass.pascalName,
+          sourceCamelName: sourceClass.camelName,
+          targetClassName: targetClass.pascalName,
+          targetCamelName: targetClass.camelName,
+        };
+      }
     }
   }
 
@@ -490,6 +519,36 @@ function generateEntityClass(cls: ParsedClass): string {
 
     public void set${capName}(${attr.javaType} ${attr.name}) {
         this.${attr.name} = ${attr.name};
+    }`);
+  }
+
+  // Inyección de relaciones @ManyToOne dobles para Clases de Asociación UML 2.5 en 'T' (RF-05.2)
+  if (cls.associationEndpoints) {
+    const ep = cls.associationEndpoints;
+    fieldDeclarations.push(`    // Relación ManyToOne con la entidad extremo 1 (${ep.sourceClassName})
+    @ManyToOne(fetch = FetchType.EAGER)
+    @JoinColumn(name = "${toSnakeCase(ep.sourceCamelName)}_id", nullable = false)
+    private ${ep.sourceClassName} ${ep.sourceCamelName};\n`);
+
+    fieldDeclarations.push(`    // Relación ManyToOne con la entidad extremo 2 (${ep.targetClassName})
+    @ManyToOne(fetch = FetchType.EAGER)
+    @JoinColumn(name = "${toSnakeCase(ep.targetCamelName)}_id", nullable = false)
+    private ${ep.targetClassName} ${ep.targetCamelName};\n`);
+
+    getterSetters.push(`    public ${ep.sourceClassName} get${ep.sourceClassName}() {
+        return this.${ep.sourceCamelName};
+    }
+
+    public void set${ep.sourceClassName}(${ep.sourceClassName} ${ep.sourceCamelName}) {
+        this.${ep.sourceCamelName} = ${ep.sourceCamelName};
+    }`);
+
+    getterSetters.push(`    public ${ep.targetClassName} get${ep.targetClassName}() {
+        return this.${ep.targetCamelName};
+    }
+
+    public void set${ep.targetClassName}(${ep.targetClassName} ${ep.targetCamelName}) {
+        this.${ep.targetCamelName} = ${ep.targetCamelName};
     }`);
   }
 

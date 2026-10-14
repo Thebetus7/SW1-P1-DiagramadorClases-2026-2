@@ -213,13 +213,27 @@ export function generateEnterpriseArchitectXmi(
   xml += `  <uml:Model xmi:type="uml:Model" xmi:id="${modelId}" name="EA_Model" visibility="public">\n`;
   xml += `    <packagedElement xmi:type="uml:Package" xmi:id="${packageId}" name="${escapeXml(cleanDiagramName)}" visibility="public">\n`;
 
-  // 1. Clases UML
+  // Identificar clases asociativas vinculadas por conector en 'T' (RF-05.1)
+  const associationClassNodeIds = new Set<string>();
+  edges.forEach((edge) => {
+    const edgeData = ((edge.data || {}) as unknown) as UmlEdgeData;
+    if (edge.type === "umlAssociationClassEdge" || edgeData?.isAssociationClass) {
+      const intermediateId = edgeData?.intermediateNodeId || edge.source;
+      if (intermediateId) {
+        associationClassNodeIds.add(intermediateId);
+      }
+    }
+  });
+
+  // 1. Clases UML y Clases de Asociación
   classNodes.forEach((node) => {
     const classId = classIdMap.get(node.id)!;
     const data = (node.data as unknown) as UmlClassData;
     const className = data.name || "ClaseSinNombre";
+    const isAssocClass = associationClassNodeIds.has(node.id);
+    const xmiClassType = isAssocClass ? "uml:AssociationClass" : "uml:Class";
 
-    xml += `      <packagedElement xmi:type="uml:Class" xmi:id="${classId}" name="${escapeXml(className)}" visibility="public">\n`;
+    xml += `      <packagedElement xmi:type="${xmiClassType}" xmi:id="${classId}" name="${escapeXml(className)}" visibility="public">\n`;
 
     // Generalizaciones (Herencia)
     const genEdges = generalizationsBySource.get(node.id) || [];
@@ -537,8 +551,12 @@ export function generateEnterpriseArchitectXmi(
       (c) => c.sourceId === classId || c.targetId === classId,
     );
 
-    xml += `      <element xmi:idref="${classId}" xmi:type="uml:Class" name="${escapeXml(className)}" scope="public">\n`;
-    xml += `        <properties isSpecification="false" sType="Class" ntype="0" scope="public" package="${packageId}"/>\n`;
+    const isAssocClass = associationClassNodeIds.has(node.id);
+    const eaElemType = isAssocClass ? "uml:AssociationClass" : "uml:Class";
+    const eaSType = isAssocClass ? "AssociationClass" : "Class";
+
+    xml += `      <element xmi:idref="${classId}" xmi:type="${eaElemType}" name="${escapeXml(className)}" scope="public">\n`;
+    xml += `        <properties isSpecification="false" sType="${eaSType}" ntype="0" scope="public" package="${packageId}"/>\n`;
 
     // Atributos en la sección de extensión de EA
     const attributes = (data.attributes || []).map(normalizeAttribute);

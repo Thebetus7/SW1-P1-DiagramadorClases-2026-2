@@ -39,6 +39,12 @@ export interface ParsedFlutterClass {
   urlPath: string;
   attributes: ParsedFlutterAttribute[];
   primaryKeyAttr: ParsedFlutterAttribute;
+  associationEndpoints?: {
+    sourceClassName: string;
+    sourceCamelName: string;
+    targetClassName: string;
+    targetCamelName: string;
+  };
 }
 
 /**
@@ -208,6 +214,32 @@ function parseCanvasData(nodes: Node[], edges: Edge[]): { classes: ParsedFlutter
     });
   });
 
+  const classMap = new Map<string, ParsedFlutterClass>();
+  parsedClasses.forEach((c) => classMap.set(c.id, c));
+
+  // Detectar clases de asociación en 'T' (UML 2.5)
+  for (const edge of edges) {
+    const edgeData = ((edge.data || {}) as unknown) as UmlEdgeData;
+    if (edge.type === "umlAssociationClassEdge" || edgeData?.isAssociationClass) {
+      const intermediateId = edgeData?.intermediateNodeId || edge.source;
+      const intermediateClass = classMap.get(intermediateId);
+      const sourceClassId = edgeData?.sourceClassId;
+      const targetClassId = edgeData?.targetClassId;
+
+      const sourceClass = sourceClassId ? classMap.get(sourceClassId) : undefined;
+      const targetClass = targetClassId ? classMap.get(targetClassId) : undefined;
+
+      if (intermediateClass && sourceClass && targetClass) {
+        intermediateClass.associationEndpoints = {
+          sourceClassName: sourceClass.pascalName,
+          sourceCamelName: sourceClass.camelName,
+          targetClassName: targetClass.pascalName,
+          targetCamelName: targetClass.camelName,
+        };
+      }
+    }
+  }
+
   return {
     classes: parsedClasses,
     relationsCount: edges.length,
@@ -338,8 +370,23 @@ class ApiConfig {
  * Genera un modelo Dart para una entidad UML
  */
 function generateDartModel(cls: ParsedFlutterClass): string {
-  const fields = cls.attributes.map((a) => `  final ${a.dartType}${a.isId ? '?' : ''} ${a.name};`).join('\n');
-  const constructorParams = cls.attributes.map((a) => `    ${a.isId ? '' : 'required '}this.${a.name},`).join('\n');
+  let importsHeader = "";
+  let assocFields = "";
+  let assocConstructorParams = "";
+  let assocFromJson = "";
+  let assocToJson = "";
+
+  if (cls.associationEndpoints) {
+    const ep = cls.associationEndpoints;
+    importsHeader = `import '${toSnakeCase(ep.sourceClassName)}.dart';\nimport '${toSnakeCase(ep.targetClassName)}.dart';\n\n`;
+    assocFields = `\n  final ${ep.sourceClassName}? ${ep.sourceCamelName};\n  final ${ep.targetClassName}? ${ep.targetCamelName};`;
+    assocConstructorParams = `\n    this.${ep.sourceCamelName},\n    this.${ep.targetCamelName},`;
+    assocFromJson = `\n      ${ep.sourceCamelName}: json['${ep.sourceCamelName}'] != null ? ${ep.sourceClassName}.fromJson(Map<String, dynamic>.from(json['${ep.sourceCamelName}'])) : null,\n      ${ep.targetCamelName}: json['${ep.targetCamelName}'] != null ? ${ep.targetClassName}.fromJson(Map<String, dynamic>.from(json['${ep.targetCamelName}'])) : null,`;
+    assocToJson = `\n      '${ep.sourceCamelName}': ${ep.sourceCamelName}?.toJson(),\n      '${ep.targetCamelName}': ${ep.targetCamelName}?.toJson(),`;
+  }
+
+  const fields = cls.attributes.map((a) => `  final ${a.dartType}${a.isId ? '?' : ''} ${a.name};`).join('\n') + assocFields;
+  const constructorParams = cls.attributes.map((a) => `    ${a.isId ? '' : 'required '}this.${a.name},`).join('\n') + assocConstructorParams;
 
   const fromJsonAssignments = cls.attributes.map((a) => {
     if (a.dartType === 'int') {
@@ -360,13 +407,13 @@ function generateDartModel(cls: ParsedFlutterClass): string {
     return a.isId
       ? `      ${a.name}: json['${a.name}']?.toString(),`
       : `      ${a.name}: json['${a.name}']?.toString() ?? '',`;
-  }).join('\n');
+  }).join('\n') + assocFromJson;
 
   const toJsonAssignments = cls.attributes.map((a) => {
     return `      '${a.name}': ${a.name},`;
-  }).join('\n');
+  }).join('\n') + assocToJson;
 
-  return `/// Modelo Dart generado automáticamente para la entidad UML: ${cls.name}
+  return `${importsHeader}/// Modelo Dart generado automáticamente para la entidad UML: ${cls.name}
 class ${cls.pascalName} {
 ${fields}
 
