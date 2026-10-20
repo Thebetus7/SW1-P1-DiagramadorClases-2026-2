@@ -29,9 +29,12 @@ function UmlAssociationClassEdgeComponent({
 
   if (edgeData?.targetEdgeId) {
     const baseEdge = getEdge(edgeData.targetEdgeId);
-    if (baseEdge) {
-      const nodeA = getNode(baseEdge.source);
-      const nodeB = getNode(baseEdge.target);
+    const sourceId = baseEdge?.source || edgeData.sourceClassId;
+    const targetId = baseEdge?.target || edgeData.targetClassId;
+
+    if (sourceId && targetId) {
+      const nodeA = getNode(sourceId);
+      const nodeB = getNode(targetId);
       if (nodeA && nodeB) {
         const ax = nodeA.position.x + ((nodeA.measured?.width ?? 200) / 2);
         const ay = nodeA.position.y + ((nodeA.measured?.height ?? 120) / 2);

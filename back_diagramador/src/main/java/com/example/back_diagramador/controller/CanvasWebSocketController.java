@@ -29,4 +29,20 @@ public class CanvasWebSocketController {
         message.setTimestamp(System.currentTimeMillis());
         return message;
     }
+
+    /**
+     * Canal STOMP para retransmitir mensajes de chat, sugerencias proactivas y resoluciones de propuestas
+     * Origen del cliente: /app/diagram/{id}/chat
+     * Destino difundido: /topic/diagram/{id}
+     */
+    @MessageMapping("/diagram/{id}/chat")
+    @SendTo("/topic/diagram/{id}")
+    public WebSocketMessage handleChatSync(
+            @DestinationVariable Long id,
+            @Payload WebSocketMessage message) {
+
+        log.debug("Mensaje de chat recibido para diagrama {}: tipo={}, usuario={}", id, message.getType(), message.getUserName());
+        message.setTimestamp(System.currentTimeMillis());
+        return message;
+    }
 }

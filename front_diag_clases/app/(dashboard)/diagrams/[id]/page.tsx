@@ -36,15 +36,25 @@ import { FlutterExportModal } from "@/components/canvas/FlutterExportModal";
 import { CanvasImageImportModal } from "@/components/canvas/CanvasImageImportModal";
 import { CollaboratorsHeader } from "@/components/canvas/CollaboratorsHeader";
 import { CanvasToolbar } from "@/components/canvas/CanvasToolbar";
-import { CanvasAiPromptBar } from "@/components/canvas/CanvasAiPromptBar";
+import { CanvasCopilotBubble } from "@/components/canvas/CanvasCopilotBubble";
+import { CanvasCopilotDrawer } from "@/components/canvas/CanvasCopilotDrawer";
+import { CanvasMobileLinkModal } from "@/components/canvas/CanvasMobileLinkModal";
 import { CustomCanvasControls } from "@/components/canvas/CustomCanvasControls";
 import { CollaborativeCursors, RemoteCursor } from "@/components/canvas/CollaborativeCursors";
 import { api } from "@/services/api";
 import { wsService } from "@/services/websocket";
 import {
+  fetchChatHistory,
+  saveChatMessage,
+  resolveProposal,
+} from "@/services/diagramChatService";
+import {
+  chatWithCopilot,
+  generateProactiveSuggestion,
   processDiagramWithGemini,
   convertImageToDiagramWithGemini,
 } from "@/services/geminiDiagramService";
+import { ChatMessage, ChatProposalPayload, CopilotMode } from "@/types";
 import {
   downloadEnterpriseArchitectXmi,
   generateEnterpriseArchitectXmi,
@@ -136,6 +146,44 @@ function DiagramEditorContent() {
   // Modal de importación de imagen con Gemini Vision en lienzo activo
   const [isCanvasImageImportOpen, setIsCanvasImageImportOpen] = useState(false);
   const [isImageImporting, setIsImageImporting] = useState(false);
+
+  // Estados para Copilot IA (Drawer, Historial MongoDB y Alertas)
+  const [isCopilotOpen, setIsCopilotOpen] = useState(false);
+  const [copilotMessages, setCopilotMessages] = useState<ChatMessage[]>([]);
+  const [isCopilotLoading, setIsCopilotLoading] = useState(false);
+  const [isProactiveThinking, setIsProactiveThinking] = useState(false);
+  const [applyingProposalId, setApplyingProposalId] = useState<string | null>(null);
+  const [aiQuotaError, setAiQuotaError] = useState<string | null>(null);
+  const [copilotUnreadCount, setCopilotUnreadCount] = useState(0);
+
+  // Guardas de concurrencia y deduplicación para Copilot IA
+  const isCopilotProcessingRef = useRef(false);
+  const isProactiveRunningRef = useRef(false);
+  const lastProactiveCanvasHashRef = useRef<string>("");
+
+  // Inserción segura y deduplicada de mensajes en el chat de Copilot
+  const appendCopilotMessage = useCallback((newMsg: ChatMessage) => {
+    setCopilotMessages((prev) => {
+      // 1. Deduplicar por ID único de MongoDB
+      if (newMsg.id && prev.some((m) => m.id === newMsg.id)) {
+        return prev;
+      }
+      // 2. Deduplicar por coincidencia idéntica de contenido y sender en ventana temporal (< 4000ms)
+      const isDuplicate = prev.some(
+        (m) =>
+          m.content === newMsg.content &&
+          m.senderType === newMsg.senderType &&
+          Math.abs(new Date(m.createdAt || 0).getTime() - new Date(newMsg.createdAt || 0).getTime()) < 4000
+      );
+      if (isDuplicate) {
+        return prev;
+      }
+      return [...prev, newMsg];
+    });
+  }, []);
+
+  // Modal para vincular visor móvil Flutter por QR / Enlace
+  const [isMobileLinkModalOpen, setIsMobileLinkModalOpen] = useState(false);
 
   // Generación de códigos en vivo para previsualización
   const xmiCode = useMemo(
@@ -272,16 +320,30 @@ function DiagramEditorContent() {
               },
             }));
 
-            const loadedEdges = (parsed.edges || []).map((edge: Edge) => ({
-              ...edge,
-              type: "umlEdge",
-              data: {
-                relationType: (edge.data as any)?.relationType || "ASSOCIATION",
-                sourceMultiplicity: (edge.data as any)?.sourceMultiplicity || "",
-                targetMultiplicity: (edge.data as any)?.targetMultiplicity || "",
-                name: (edge.data as any)?.name || "",
-              },
-            }));
+            const loadedEdges = (parsed.edges || []).map((edge: Edge) => {
+              const isAssoc =
+                edge.type === "umlAssociationClassEdge" ||
+                (edge.data as any)?.relationType === "ASSOCIATION_CLASS" ||
+                (edge.data as any)?.isAssociationClass === true ||
+                !!(edge.data as any)?.targetEdgeId;
+
+              return {
+                ...edge,
+                type: isAssoc ? "umlAssociationClassEdge" : "umlEdge",
+                data: {
+                  ...edge.data,
+                  relationType: (edge.data as any)?.relationType || "ASSOCIATION",
+                  sourceMultiplicity: (edge.data as any)?.sourceMultiplicity || "",
+                  targetMultiplicity: (edge.data as any)?.targetMultiplicity || "",
+                  name: (edge.data as any)?.name || "",
+                  targetEdgeId: (edge.data as any)?.targetEdgeId || undefined,
+                  sourceClassId: (edge.data as any)?.sourceClassId || undefined,
+                  targetClassId: (edge.data as any)?.targetClassId || undefined,
+                  intermediateNodeId: (edge.data as any)?.intermediateNodeId || undefined,
+                  isAssociationClass: isAssoc ? true : undefined,
+                },
+              };
+            });
 
             setNodes(loadedNodes);
             setEdges(loadedEdges);
@@ -451,6 +513,58 @@ function DiagramEditorContent() {
               console.error("Error al aplicar actualización remota de lienzo:", e);
             }
           }
+
+          // Manejo de mensajes de chat o sugerencias proactivas compartidas
+          if (msg.type === "CHAT_MESSAGE" || msg.type === "PROACTIVE_SUGGESTION") {
+            try {
+              const chatItem: ChatMessage = JSON.parse(msg.payload);
+              // Deduplicar mensaje antes de añadirlo y antes de incrementar contador de no leídos
+              setCopilotMessages((prev) => {
+                if (chatItem.id && prev.some((m) => m.id === chatItem.id)) {
+                  return prev;
+                }
+                const isDuplicate = prev.some(
+                  (m) =>
+                    m.content === chatItem.content &&
+                    m.senderType === chatItem.senderType &&
+                    Math.abs(new Date(m.createdAt || 0).getTime() - new Date(chatItem.createdAt || 0).getTime()) < 4000
+                );
+                if (isDuplicate) {
+                  return prev;
+                }
+                // Si el mensaje es efectivamente nuevo y proviene de otro usuario o sistema, incrementar contador
+                if (msg.userId !== currentUserRef.current?.id) {
+                  setCopilotUnreadCount((count) => count + 1);
+                }
+                return [...prev, chatItem];
+              });
+            } catch (e) {
+              console.error("Error al procesar CHAT_MESSAGE por WebSocket:", e);
+            }
+            return;
+          }
+
+          // Manejo de resolución de propuestas interactivas en vivo
+          if (msg.type === "PROPOSAL_RESOLVED") {
+            try {
+              const { messageId, status, resolvedByUserName } = JSON.parse(msg.payload);
+              setCopilotMessages((prev) =>
+                prev.map((m) =>
+                  m.id === messageId
+                    ? {
+                        ...m,
+                        proposalStatus: status,
+                        resolvedByUserName,
+                        proposal: m.proposal ? { ...m.proposal, status, resolvedByUserName } : null,
+                      }
+                    : m
+                )
+              );
+            } catch (e) {
+              console.error("Error al procesar PROPOSAL_RESOLVED por WebSocket:", e);
+            }
+            return;
+          }
         });
       },
       () => {
@@ -462,6 +576,31 @@ function DiagramEditorContent() {
       // wsService.disconnect();
     };
   }, [currentUser, diagramId, diagram?.idCreador, handleOpenEditClass, handleOpenEditNote]);
+
+  // Cargar historial de chat colaborativo persistido en MongoDB
+  useEffect(() => {
+    if (!diagramId) return;
+    fetchChatHistory(diagramId)
+      .then((history) => {
+        // Deduplicar historial por ID antes de setearlo en el estado
+        const uniqueHistory: ChatMessage[] = [];
+        const seenIds = new Set<string>();
+        for (const item of history || []) {
+          if (item.id) {
+            if (!seenIds.has(item.id)) {
+              seenIds.add(item.id);
+              uniqueHistory.push(item);
+            }
+          } else {
+            uniqueHistory.push(item);
+          }
+        }
+        setCopilotMessages(uniqueHistory);
+      })
+      .catch((err) => {
+        console.warn("Aviso: No se pudo cargar el historial de chat de MongoDB:", err);
+      });
+  }, [diagramId]);
 
   // Autoguardado debounced en la base de datos (REST PUT)
   const triggerAutoSave = useCallback(
@@ -693,6 +832,105 @@ function DiagramEditorContent() {
     [broadcastCanvas]
   );
 
+  // Referencia mutable para debounce de sugerencias proactivas ante cambios semánticos (T5.1)
+  const proactiveDebounceRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Disparar sugerencia proactiva ante cambios estructurales con guard de concurrencia y hash
+  const triggerProactiveSuggestion = useCallback(
+    async (authorName: string, updatedNodes: Node[], updatedEdges: Edge[]) => {
+      if (!diagramId || !authorName || isProactiveRunningRef.current) return;
+
+      // Evitar sugerencias duplicadas sobre el mismo estado del canvas
+      const canvasHash = JSON.stringify({
+        nodes: updatedNodes.map((n) => ({ id: n.id, name: n.data?.name, attrs: (n.data as any)?.attributes })),
+        edges: updatedEdges.map((e) => ({ s: e.source, t: e.target, rel: (e.data as any)?.relationType })),
+      });
+      if (canvasHash === lastProactiveCanvasHashRef.current) {
+        setIsProactiveThinking(false);
+        return;
+      }
+      lastProactiveCanvasHashRef.current = canvasHash;
+
+      isProactiveRunningRef.current = true;
+      try {
+        setIsProactiveThinking(true);
+        const suggestion = await generateProactiveSuggestion(
+          updatedNodes,
+          updatedEdges,
+          diagram?.nombre || "diagrama",
+          authorName
+        );
+
+        if (!suggestion) return;
+
+        const suggestionMsg: Partial<ChatMessage> = {
+          diagramId,
+          senderType: "COPILOT",
+          userName: "Copilot IA",
+          mode: "CHAT",
+          messageType: "PROACTIVE_SUGGESTION",
+          content: suggestion.content,
+          taggedUserName: suggestion.taggedUserName,
+          proposal: suggestion.proposal,
+          proposalStatus: suggestion.proposal ? "PENDING" : undefined,
+          proposalJson: suggestion.proposal ? JSON.stringify(suggestion.proposal) : undefined,
+          isError: false,
+          createdAt: new Date().toISOString(),
+        };
+
+        const saved = await saveChatMessage(diagramId, suggestionMsg);
+        appendCopilotMessage(saved);
+        setCopilotUnreadCount((prev) => prev + 1);
+
+        // Difundir sugerencia a colaboradores
+        wsService.sendMessage(diagramId, {
+          type: "PROACTIVE_SUGGESTION",
+          diagramId,
+          userId: 0,
+          userName: "Copilot IA",
+          userRole: "SISTEMA",
+          payload: JSON.stringify(saved),
+        });
+      } catch (err: any) {
+        console.warn("Aviso al generar sugerencia proactiva:", err);
+        if (err.message?.includes("IA saturada")) {
+          setAiQuotaError("IA saturada, vuelve a escribir");
+        }
+      } finally {
+        isProactiveRunningRef.current = false;
+        setIsProactiveThinking(false);
+      }
+    },
+    [diagramId, diagram, appendCopilotMessage]
+  );
+
+  const scheduleProactiveSuggestion = useCallback(
+    (nextNodes: Node[], nextEdges: Edge[]) => {
+      const author = currentUserRef.current?.nombre;
+      if (!author || !diagramId) return;
+
+      setIsProactiveThinking(true);
+
+      if (proactiveDebounceRef.current) {
+        clearTimeout(proactiveDebounceRef.current);
+      }
+
+      proactiveDebounceRef.current = setTimeout(() => {
+        triggerProactiveSuggestion(author, nextNodes, nextEdges);
+      }, 1500);
+    },
+    [diagramId, triggerProactiveSuggestion]
+  );
+
+  useEffect(() => {
+    return () => {
+      if (proactiveDebounceRef.current) {
+        clearTimeout(proactiveDebounceRef.current);
+      }
+      setIsProactiveThinking(false);
+    };
+  }, []);
+
   // Registro del nodo que inició el arrastre del conector para posibilitar soltar sobre arista base
   const connectingNodeIdRef = useRef<string | null>(null);
 
@@ -772,9 +1010,10 @@ function DiagramEditorContent() {
         const nextEdges = [...edges, newAssocEdge];
         setEdges(nextEdges);
         broadcastCanvas(nodes, nextEdges);
+        scheduleProactiveSuggestion(nodes, nextEdges);
       }
     },
-    [edges, nodes, broadcastCanvas]
+    [edges, nodes, broadcastCanvas, scheduleProactiveSuggestion]
   );
 
   // Interceptar la conexión para desplegar el selector de tipo de relación UML
@@ -806,6 +1045,7 @@ function DiagramEditorContent() {
     const nextEdges = addEdge(newEdge, edges);
     setEdges(nextEdges);
     broadcastCanvas(nodes, nextEdges);
+    scheduleProactiveSuggestion(nodes, nextEdges);
     setPendingConnection(null);
   };
 
@@ -842,6 +1082,7 @@ function DiagramEditorContent() {
 
     setEdges(nextEdges);
     broadcastCanvas(nodes, nextEdges);
+    scheduleProactiveSuggestion(nodes, nextEdges);
   };
 
   // Eliminar arista desde el modal con preservación de arista base (T2.3)
@@ -863,6 +1104,7 @@ function DiagramEditorContent() {
     }
     setEdges(nextEdges);
     broadcastCanvas(nodes, nextEdges);
+    scheduleProactiveSuggestion(nodes, nextEdges);
   };
 
   // Añadir una nueva Clase UML
@@ -892,6 +1134,7 @@ function DiagramEditorContent() {
     const nextNodes = [...nodes, newNode];
     setNodes(nextNodes);
     broadcastCanvas(nextNodes, edges);
+    scheduleProactiveSuggestion(nextNodes, edges);
   };
 
   // Añadir una nueva Nota UML
@@ -913,6 +1156,7 @@ function DiagramEditorContent() {
     const nextNodes = [...nodes, newNode];
     setNodes(nextNodes);
     broadcastCanvas(nextNodes, edges);
+    scheduleProactiveSuggestion(nextNodes, edges);
   };
 
   // Guardar cambios en el modal de edición de nota
@@ -933,6 +1177,7 @@ function DiagramEditorContent() {
 
     setNodes(nextNodes);
     broadcastCanvas(nextNodes, edges);
+    scheduleProactiveSuggestion(nextNodes, edges);
   };
 
   // Guardar cambios en el modal de edición de clase
@@ -956,6 +1201,7 @@ function DiagramEditorContent() {
 
     setNodes(nextNodes);
     broadcastCanvas(nextNodes, edges);
+    scheduleProactiveSuggestion(nextNodes, edges);
   };
 
   // Eliminar nodo de clase desde el modal preservando aristas base no afectadas
@@ -977,6 +1223,7 @@ function DiagramEditorContent() {
     setNodes(nextNodes);
     setEdges(nextEdges);
     broadcastCanvas(nextNodes, nextEdges);
+    scheduleProactiveSuggestion(nextNodes, nextEdges);
   };
 
   // Guardar en la base de datos (REST PUT)
@@ -1050,35 +1297,320 @@ function DiagramEditorContent() {
     downloadAnchor.remove();
   };
 
-  // Ejecutar instrucción con Inteligencia Artificial (Gemini 2.5 Flash)
-  const handleExecuteAiPrompt = async (promptText: string) => {
-    setIsAiLoading(true);
+  // =========================================================================
+  // COPILOT IA: ENVÍO DUAL, PROPUESTAS INTERACTIVAS Y SUGERENCIAS PROACTIVAS
+  // =========================================================================
+
+  // Enviar mensaje al Copilot IA (Modo Chat o Modo Editor) con guardia de concurrencia y deduplicación
+  const handleSendCopilotMessage = async (content: string, mode: CopilotMode) => {
+    if (!diagramId || !currentUser || !content.trim() || isCopilotLoading || isCopilotProcessingRef.current) return;
+    isCopilotProcessingRef.current = true;
+    setIsCopilotLoading(true);
+    setAiQuotaError(null);
+
+    // 1. Crear y persistir mensaje del usuario en MongoDB
+    const userMsg: Partial<ChatMessage> = {
+      diagramId,
+      senderType: "USER",
+      userId: currentUser.id,
+      userName: currentUser.nombre,
+      mode,
+      messageType: "CHAT_MESSAGE",
+      content,
+      isError: false,
+      createdAt: new Date().toISOString(),
+    };
+
     try {
-      const result = await processDiagramWithGemini(
-        promptText,
+      const savedUserMsg = await saveChatMessage(diagramId, userMsg);
+      appendCopilotMessage(savedUserMsg);
+
+      // Difundir mensaje de usuario por WebSocket a otros colaboradores
+      wsService.sendMessage(diagramId, {
+        type: "CHAT_MESSAGE",
+        diagramId,
+        userId: currentUser.id,
+        userName: currentUser.nombre,
+        userRole: diagram?.idCreador === currentUser.id ? "CREADOR" : "COLABORADOR",
+        payload: JSON.stringify(savedUserMsg),
+      });
+
+      // 2. Invocar Copilot IA (Gemini 2.5 Flash)
+      const aiResponse = await chatWithCopilot(
+        content,
+        mode,
         nodes,
         edges,
         diagram?.nombre || "diagrama"
       );
 
-      // Inyectar callback onEdit en los nodos de clase y nota
-      const nextNodes = result.nodes.map((node) => ({
-        ...node,
-        data: {
-          ...node.data,
-          onEdit: node.type === "umlNote" ? handleOpenEditNote : handleOpenEditClass,
-        },
-      }));
+      // 3. Crear y persistir mensaje de respuesta de la IA
+      const copilotMsg: Partial<ChatMessage> = {
+        diagramId,
+        senderType: "COPILOT",
+        userName: "Copilot IA",
+        mode,
+        messageType: aiResponse.proposal ? "EDITOR_PROPOSAL" : "CHAT_MESSAGE",
+        content: aiResponse.replyText,
+        proposal: aiResponse.proposal,
+        proposalStatus: aiResponse.proposal ? "PENDING" : undefined,
+        proposalJson: aiResponse.proposal ? JSON.stringify(aiResponse.proposal) : undefined,
+        isError: false,
+        createdAt: new Date().toISOString(),
+      };
 
-      setNodes(nextNodes);
-      setEdges(result.edges);
-      broadcastCanvas(nextNodes, result.edges);
+      const savedCopilotMsg = await saveChatMessage(diagramId, copilotMsg);
+      appendCopilotMessage(savedCopilotMsg);
 
-      return result.explanation;
+      // Difundir respuesta de Copilot a colaboradores
+      wsService.sendMessage(diagramId, {
+        type: aiResponse.proposal ? "PROACTIVE_SUGGESTION" : "CHAT_MESSAGE",
+        diagramId,
+        userId: 0,
+        userName: "Copilot IA",
+        userRole: "SISTEMA",
+        payload: JSON.stringify(savedCopilotMsg),
+      });
+    } catch (err: any) {
+      console.warn("Aviso en interacción con Copilot:", err);
+      if (err.message?.includes("IA saturada") || err.message?.includes("429")) {
+        setAiQuotaError("IA saturada, vuelve a escribir");
+      } else {
+        setAiQuotaError(err.message || "Error al comunicarse con la IA.");
+      }
     } finally {
-      setIsAiLoading(false);
+      isCopilotProcessingRef.current = false;
+      setIsCopilotLoading(false);
     }
   };
+
+  // Aceptar propuesta de Copilot (Aplica mutación al lienzo y difunde)
+  const handleAcceptProposal = async (messageId: string, proposal?: ChatProposalPayload | null) => {
+    if (!diagramId || !currentUser) return;
+    try {
+      setApplyingProposalId(messageId);
+      setIsCopilotLoading(true);
+
+      let nextNodes: Node[] = [];
+      let nextEdges: Edge[] = [];
+      let appliedExplanation = "";
+
+      // Caso A: La propuesta ya traía deltas de nodos precalculados
+      if (proposal?.nodesDelta && proposal.nodesDelta.length > 0) {
+        const existingNodeIds = new Set(nodes.map((n) => n.id));
+
+        nextNodes = proposal.nodesDelta.map((node: any) => {
+          const isAffected = !existingNodeIds.has(node.id) || proposal.affectedNodeIds?.includes(node.id);
+          return {
+            ...node,
+            data: {
+              ...node.data,
+              isHighlighted: isAffected,
+              onEdit: node.type === "umlNote" ? handleOpenEditNote : handleOpenEditClass,
+            },
+          };
+        });
+
+        nextEdges = proposal.edgesDelta || edges;
+        appliedExplanation = proposal.summary || "Cambios propuestos aplicados al lienzo.";
+      } else {
+        // Caso B: La propuesta no traía delta (ej: sugerencia proactiva textual).
+        // Extraemos la instrucción y calculamos la mutación en vivo con Gemini.
+        const originalMsg = copilotMessages.find((m) => m.id === messageId);
+        let instruction = proposal?.summary || "";
+        if (!instruction && originalMsg?.content) {
+          // Remover prefijo "@NombreUsuario:" si existe
+          instruction = originalMsg.content.replace(/^@[^:]+:\s*/, "").trim();
+        }
+
+        if (instruction) {
+          const result = await processDiagramWithGemini(
+            instruction,
+            nodes,
+            edges,
+            diagram?.nombre || "diagrama"
+          );
+
+          appliedExplanation = result.explanation;
+
+          // Detectar qué nodos cambiaron o son nuevos respecto al lienzo actual
+          const existingNodeMap = new Map(nodes.map((n) => [n.id, n]));
+          const existingNodeByName = new Map(nodes.map((n) => [(n.data as any)?.name?.toLowerCase(), n]));
+
+          nextNodes = result.nodes.map((node: any) => {
+            const prevNode = existingNodeMap.get(node.id) || existingNodeByName.get(node.data?.name?.toLowerCase());
+            let isModified = !prevNode;
+            if (prevNode) {
+              const prevAttrs = JSON.stringify(prevNode.data?.attributes || []);
+              const nextAttrs = JSON.stringify(node.data?.attributes || []);
+              const prevMethods = JSON.stringify(prevNode.data?.methods || []);
+              const nextMethods = JSON.stringify(node.data?.methods || []);
+              const prevName = prevNode.data?.name;
+              const nextName = node.data?.name;
+              if (prevAttrs !== nextAttrs || prevMethods !== nextMethods || prevName !== nextName) {
+                isModified = true;
+              }
+            }
+            return {
+              ...node,
+              data: {
+                ...node.data,
+                isHighlighted: isModified,
+                onEdit: node.type === "umlNote" ? handleOpenEditNote : handleOpenEditClass,
+              },
+            };
+          });
+
+          nextEdges = result.edges;
+        }
+      }
+
+      // Si tenemos nodos modificados para aplicar al lienzo
+      if (nextNodes.length > 0) {
+        setNodes(nextNodes);
+        setEdges(nextEdges);
+        broadcastCanvas(nextNodes, nextEdges);
+
+        // Desactivar resaltado luminoso tras 2.5 segundos
+        setTimeout(() => {
+          setNodes((current) =>
+            current.map((n) =>
+              (n.data as any)?.isHighlighted
+                ? { ...n, data: { ...n.data, isHighlighted: false } }
+                : n
+            )
+          );
+        }, 2500);
+
+        // Persistir inmediatamente el lienzo actualizado en PostgreSQL
+        try {
+          const lienzoPayload = JSON.stringify({
+            nodes: nextNodes.map((n: any) => ({
+              id: n.id,
+              type: n.type,
+              position: n.position,
+              data: {
+                name: (n.data as any)?.name,
+                stereotype: (n.data as any)?.stereotype,
+                attributes: (n.data as any)?.attributes,
+                methods: (n.data as any)?.methods,
+                content: (n.data as any)?.content,
+              },
+            })),
+            edges: nextEdges.map((e: any) => ({
+              id: e.id,
+              source: e.source,
+              target: e.target,
+              sourceHandle: e.sourceHandle,
+              targetHandle: e.targetHandle,
+              type: e.type || "umlEdge",
+              data: e.data,
+            })),
+          });
+
+          api.updateDiagram(diagramId, {
+            lienzo: lienzoPayload,
+            usuarioId: currentUser.id,
+          }).catch((err) => console.warn("Aviso al auto-guardar propuesta en PostgreSQL:", err));
+        } catch (e) {
+          console.warn("Error al serializar payload de lienzo:", e);
+        }
+      }
+
+      // Actualizar estado en MongoDB
+      const updated = await resolveProposal(diagramId, messageId, "ACCEPTED", currentUser.id, currentUser.nombre);
+
+      // Actualizar estado local
+      setCopilotMessages((prev) =>
+        prev.map((m) => (m.id === messageId ? updated : m))
+      );
+
+      // Difundir resolución a colaboradores por WebSocket
+      wsService.sendMessage(diagramId, {
+        type: "PROPOSAL_RESOLVED",
+        diagramId,
+        userId: currentUser.id,
+        userName: currentUser.nombre,
+        userRole: diagram?.idCreador === currentUser.id ? "CREADOR" : "COLABORADOR",
+        payload: JSON.stringify({
+          messageId,
+          status: "ACCEPTED",
+          resolvedByUserName: currentUser.nombre,
+        }),
+      });
+
+      // Emitir mensaje explícito de Copilot confirmando las modificaciones aplicadas al lienzo (acordado en /grill-me)
+      try {
+        const confirmationContent =
+          appliedExplanation ||
+          (proposal?.summary
+            ? `He aplicado la propuesta: ${proposal.summary}`
+            : "He aplicado con éxito los cambios de la sugerencia al lienzo UML.");
+
+        const confirmationMsg: Partial<ChatMessage> = {
+          diagramId,
+          senderType: "COPILOT",
+          userName: "Copilot IA",
+          mode: "EDITOR",
+          messageType: "CHAT_MESSAGE",
+          content: confirmationContent,
+          isError: false,
+          createdAt: new Date().toISOString(),
+        };
+
+        const savedConfirmation = await saveChatMessage(diagramId, confirmationMsg);
+        appendCopilotMessage(savedConfirmation);
+
+        wsService.sendMessage(diagramId, {
+          type: "CHAT_MESSAGE",
+          diagramId,
+          userId: 0,
+          userName: "Copilot IA",
+          userRole: "SISTEMA",
+          payload: JSON.stringify(savedConfirmation),
+        });
+      } catch (confirmErr) {
+        console.warn("Aviso al emitir mensaje de confirmación de Copilot:", confirmErr);
+      }
+
+      setToastMessage("Propuesta de Copilot aplicada con éxito al lienzo.");
+    } catch (err: any) {
+      console.error("Error al aceptar propuesta:", err);
+      setToastMessage(err.message || "No se pudo aceptar la propuesta.");
+    } finally {
+      setApplyingProposalId(null);
+      setIsCopilotLoading(false);
+    }
+  };
+
+  // Ignorar propuesta de Copilot
+  const handleIgnoreProposal = async (messageId: string) => {
+    if (!diagramId || !currentUser) return;
+    try {
+      const updated = await resolveProposal(diagramId, messageId, "IGNORED", currentUser.id, currentUser.nombre);
+
+      setCopilotMessages((prev) =>
+        prev.map((m) => (m.id === messageId ? updated : m))
+      );
+
+      wsService.sendMessage(diagramId, {
+        type: "PROPOSAL_RESOLVED",
+        diagramId,
+        userId: currentUser.id,
+        userName: currentUser.nombre,
+        userRole: diagram?.idCreador === currentUser.id ? "CREADOR" : "COLABORADOR",
+        payload: JSON.stringify({
+          messageId,
+          status: "IGNORED",
+          resolvedByUserName: currentUser.nombre,
+        }),
+      });
+    } catch (err: any) {
+      console.error("Error al ignorar propuesta:", err);
+    }
+  };
+
+
 
   // Importar y procesar imagen con Gemini Vision (Reemplazar vs Fusionar con cálculo espacial armónico)
   const handleCanvasImageImport = async (
@@ -1240,6 +1772,7 @@ function DiagramEditorContent() {
           onOpenPreview={() => setIsCodePreviewOpen(true)}
           onOpenSpringBootExport={() => setIsSpringBootExportOpen(true)}
           onOpenFlutterExport={() => setIsFlutterExportOpen(true)}
+          onOpenMobileLink={() => setIsMobileLinkModalOpen(true)}
           isWsConnected={isWsConnected}
         />
 
@@ -1290,10 +1823,39 @@ function DiagramEditorContent() {
         {/* Punteros de ratón de colaboradores en tiempo real (Overlay sobre el lienzo) */}
         <CollaborativeCursors cursors={remoteCursors} />
 
-        {/* Barra de Inteligencia Artificial (Gemini 2.5 Flash + Reconocimiento de Voz) */}
-        <CanvasAiPromptBar
-          onExecutePrompt={handleExecuteAiPrompt}
-          isLoading={isAiLoading}
+        {/* Burbuja flotante y Panel Lateral de Copilot IA (Reemplaza CanvasAiPromptBar) */}
+        <CanvasCopilotBubble
+          isOpen={isCopilotOpen}
+          onToggle={() => {
+            setIsCopilotOpen(!isCopilotOpen);
+            if (!isCopilotOpen) setCopilotUnreadCount(0);
+          }}
+          unreadCount={copilotUnreadCount}
+          isThinking={isProactiveThinking || Boolean(applyingProposalId)}
+        />
+
+        <CanvasCopilotDrawer
+          isOpen={isCopilotOpen}
+          onClose={() => setIsCopilotOpen(false)}
+          diagramId={diagramId}
+          diagramName={diagram?.nombre || "Diagrama"}
+          currentUser={currentUser}
+          messages={copilotMessages}
+          onSendMessage={handleSendCopilotMessage}
+          onAcceptProposal={handleAcceptProposal}
+          onIgnoreProposal={handleIgnoreProposal}
+          isLoading={isCopilotLoading}
+          isProactiveThinking={isProactiveThinking}
+          applyingProposalId={applyingProposalId}
+          aiQuotaError={aiQuotaError}
+        />
+
+        {/* Modal para Vincular Visor Móvil Companion (Flutter por QR / Enlace) */}
+        <CanvasMobileLinkModal
+          isOpen={isMobileLinkModalOpen}
+          onClose={() => setIsMobileLinkModalOpen(false)}
+          diagramId={diagramId}
+          diagramName={diagram?.nombre || "Diagrama"}
         />
       </div>
 

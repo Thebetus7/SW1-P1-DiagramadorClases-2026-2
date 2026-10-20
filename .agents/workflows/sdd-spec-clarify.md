@@ -1,1962 +1,335 @@
-# SDD-Spec-Clarify: QA Gate de Especificación Funcional
+# SDD-Spec-Clarify: QA Gate de Especificación Funcional y Auditoría de Ambigüedad Cero
 
-Este workflow es el **gate formal de calidad funcional** del sistema SDD.
+Este workflow es el **gate formal de control de calidad funcional (QA Gate)** del ecosistema SDD.
 
-Su propósito es verificar que una `spec.md` esté suficientemente definida, sea coherente con la Constitución, no contenga ambigüedades relevantes y pueda pasar a `/sdd-planning` sin obligar al arquitecto o desarrollador a inventar comportamiento de negocio.
+Su propósito es auditar de forma independiente un archivo `docs/specs/XX-feature/spec.md` (generado previamente por `/sdd-spec-strict`, `/sdd-spec-assisted`, `/sdd-spec-high` o `/sdd-spec-low`) para verificar que sea 100% coherente con `docs/constitution.md`, no contenga ambigüedades de negocio ni contradicciones internas, y pueda avanzar a `/sdd-planning` sin obligar al arquitecto o desarrollador a inventar comportamiento funcional.
 
-`/sdd-spec-clarify` no existe para embellecer, alargar o reescribir una Specification.
+`/sdd-spec-clarify` no existe para embellecer, alargar artificialmente ni reescribir por estilo una especificación. Existe para responder con rigor implacable a una única pregunta:
 
-Existe para responder:
+> **¿Dos ingenieros razonables, leyendo exclusivamente `docs/constitution.md` y este `spec.md`, implementarían exactamente el mismo comportamiento funcional observable sin tener que adivinar ninguna regla de negocio?**
 
-> **¿Dos implementadores razonables, leyendo exclusivamente la documentación aprobada, llegarían al mismo comportamiento funcional?**
-
-Si la respuesta es no debido a una decisión de negocio no resuelta, el workflow debe **detenerse y preguntar**.
+Si la respuesta es **NO**, el workflow **bloquea la aprobación (`NEEDS_CLARIFICATION`), formula la mínima cantidad de preguntas necesarias y se detiene**. Si la respuesta es **SÍ**, promueve el documento a **`Status: APPROVED`** y habilita `/sdd-planning`.
 
 ---
 
-# 0. REGLA SUPREMA — NO APROBAR UNA ESPECIFICACIÓN AMBIGUA
+# 0. Garantías Supremas de Operación (Invariantes de Nivel Cero)
 
-Esta regla tiene precedencia absoluta dentro de este workflow.
+Estas cuatro garantías tienen precedencia absoluta dentro de este workflow.
 
-La IA **NO DEBE marcar `spec.md` como `APPROVED`** si detecta una ambigüedad, incompletitud, contradicción o inconsistencia que pueda producir dos comportamientos funcionales razonables.
+## 0.1 Candado de Inmutabilidad en Disco (Pre-Execution Filesystem Lock)
 
-Esto incluye, entre otros:
-
+### Nivel 1 — Prohibición Absoluta de Tocar Código o Artefactos Técnicos
+Durante la ejecución de `/sdd-spec-clarify`, el asistente tiene **TERMINANTEMENTE PROHIBIDO**:
 ```text
-alcance;
-actores;
-permisos;
-flujo;
-reglas de negocio;
-estados;
-transiciones;
-entradas;
-salidas;
-validaciones;
-dependencias;
-errores;
-casos vacíos;
-casos borde;
-efectos secundarios;
-criterios de aceptación;
-terminología.
+- Crear, modificar o eliminar archivos de código fuente, controladores, modelos, vistas o tests.
+- Crear o modificar prematuramente docs/specs/XX-feature/plan.md o tasks.md.
+- Modificar silenciosamente docs/constitution.md o especificaciones de otros módulos.
 ```
 
-Ante un problema relevante:
+El **único archivo que este workflow tiene autorización para actualizar en disco** es:
 
 ```text
-NO asumir
-NO inventar
-NO aprobar
-NO ocultar
-NO trasladar arbitrariamente a Planning
+docs/specs/XX-feature/spec.md
 ```
 
-La IA debe:
+### Nivel 2 — Modo 100% Read-Only cuando Existen Bloqueos (Tiempo 1: Auditoría y Preguntas)
+
+Si durante la auditoría la IA detecta al menos un hallazgo `BLOCKING` (o `IMPORTANT` que requiera decisión humana):
 
 ```text
-detectar
-→ explicar
-→ formular la pregunta mínima necesaria
-→ detenerse
-→ recibir respuesta
-→ actualizar
-→ reauditar
+La IA NO DEBE reescribir ni inventar respuestas dentro de docs/specs/XX-feature/spec.md.
+Presenta el Reporte de QA y las preguntas en la conversación y se detiene (STOP).
+```
+
+Solo cuando el usuario responde a las preguntas (o cuando la auditoría arroja `0 BLOCKING`), la IA actualiza `spec.md` en disco y cambia su estado a `Status: APPROVED`.
+
+---
+
+## 0.2 Regla Suprema de Calidad: Prohibido Aprobar una Especificación Ambigua
+
+La IA **NO DEBE marcar `spec.md` como `APPROVED`** si detecta cualquier ambigüedad, incompletitud, contradicción o laguna lógica que permita dos interpretaciones funcionales distintas sobre:
+
+```text
+alcance (In-Scope / Out-of-Scope);
+actores y matriz de permisos;
+flujo principal y flujos alternativos;
+reglas de negocio, cálculos y fórmulas;
+máquina de estados y transiciones permitidas/prohibidas;
+entradas, obligatoriedad de datos, formatos y rangos de validación;
+dependencias entre entidades y comportamiento ante catálogos vacíos (Zero-State);
+errores observables, casos borde (Boundaries) y efectos secundarios;
+criterios de aceptación y escenarios Gherkin (SC-XX.Y.Z);
+alineación terminológica con el Lenguaje Ubicuo de constitution.md.
+```
+
+Ante un vacío funcional relevante, queda estrictamente prohibido:
+
+```text
+- Asumir en silencio ("seguramente se entiende", "el desarrollador sabrá qué hacer").
+- Trasladar la decisión de negocio a /sdd-planning ("en el plan técnico decidiremos si se puede cancelar").
+- Inventar una regla no autorizada por el usuario.
 ```
 
 ---
 
-# 1. OBJETIVO DEL QA GATE
+## 0.3 Independencia Cognitiva del Auditor (Mentalidad de Abogado del Diablo)
 
-El objetivo es asegurar que `spec.md` sea:
+Quien construye la especificación (`/sdd-spec-*`) busca estructurarla; quien ejecuta `/sdd-spec-clarify` debe **intentar demostrar que la especificación tiene huecos antes de dejarla pasar**.
 
-```text
-Clara
-Coherente
-Completa para su alcance
-Observable
-Trazable
-Implementable
-Consistente con Constitution
-Libre de decisiones de negocio implícitas
-```
-
-El objetivo **NO** es hacer que el documento sea perfecto ni exhaustivo.
-
-Debe quedar:
-
-> **Lo suficientemente definido para que Planning pueda diseñar la solución sin inventar comportamiento funcional.**
+* La IA jamás debe asumir: *"Como yo mismo redacté este `spec.md` en el paso anterior, entonces ya está perfecto"*.
+* Debe leer el documento desde cero como un **auditor e implementador externo hostil a la ambigüedad**, buscando activamente dónde dos desarrolladores podrían programar cosas distintas leyendo la misma frase.
 
 ---
 
-# 2. POSICIÓN DENTRO DEL FLUJO SDD
+## 0.4 Preservación Sin Pérdida al Actualizar (Zero-Loss Editing)
+
+Cuando el usuario responda a las preguntas de clarificación y la IA actualice `docs/specs/XX-feature/spec.md`:
+
+* Debe preservar intactos los identificadores (`HU-XX`, `RF-XX.Y`, `RB-XX`, `SC-XX.Y.Z`), la trazabilidad, las reglas ya aprobadas y todo el detalle del documento original.
+* **Prohibido resumir, recortar o "simplificar" secciones existentes** del `spec.md` al momento de insertar las aclaraciones. Solo se modifica o expande exactamente aquello que fue objeto de clarificación.
+
+---
+
+# 1. Posición y Autoridad en el Flujo SDD
+
+`/sdd-spec-clarify` es la **aduana obligatoria** entre el mundo del negocio y el mundo de la arquitectura técnica:
 
 ```mermaid
-flowchart TD
-
-    C["Constitution"]
-    S["Spec-High / Spec-Low"]
-    Q["Spec-Clarify"]
-    P["Planning"]
-    T["Tasks"]
-    E["Execution"]
-
-    C --> S
-    S --> Q
-    Q --> P
-    P --> T
-    T --> E
-
-    Q -. "Ambigüedad" .-> S
-    E -. "Ambigüedad funcional descubierta" .-> Q
-    E -. "Cambio funcional" .-> S
+flowchart LR
+    C["docs/constitution.md"] --> S["/sdd-spec-strict<br/>/sdd-spec-assisted<br/>/sdd-spec-high<br/>/sdd-spec-low"]
+    S -->|"spec.md (IN_REVIEW)"| Q["/sdd-spec-clarify<br/>(QA Gate)"]
+    Q -->|"Hallazgos BLOCKING"| NC["NEEDS_CLARIFICATION<br/>(Preguntas + STOP)"]
+    NC -->|"Respuestas del Usuario"| Q
+    Q -->|"0 Bloqueos"| AP["spec.md (APPROVED)"]
+    AP -->|"Habilita"| P["/sdd-planning"]
 ```
 
-`Spec-Clarify` se encuentra entre:
-
-```text
-Specification
-        ↓
-Clarification / QA
-        ↓
-Planning
-```
-
-Por tanto:
-
-> **Planning no debe consumir una Specification que todavía tenga decisiones funcionales críticas pendientes.**
+> **Frontera Inquebrantable**: Ninguna decisión que pertenezca al negocio puede cruzar hacia `/sdd-planning` disfrazada de suposición técnica.
 
 ---
 
-# 3. INDEPENDENCIA DEL ANÁLISIS
+# 2. Los 4 Tests Mentales Obligatorios del QA Gate
 
-`/sdd-spec-high` construye la especificación.
+Antes de emitir su veredicto, la IA debe someter el `spec.md` a estas cuatro pruebas formales de ingeniería de requisitos:
 
-`/sdd-spec-clarify` debe intentar **cuestionarla de forma independiente**.
+## 2.1 Test de Implementación Doble (The Dual-Implementation Test)
 
-La IA no debe asumir:
-
-```text
-"Como yo escribí el spec, entonces ya está completo."
-```
-
-Debe releerlo como si fuera un implementador que nunca participó en la entrevista.
-
-Mentalidad:
+Para cada regla (`RB`), requisito (`RF`) y escenario (`SC`), la IA intenta construir mentalmente **dos implementaciones que cumplan literalmente el texto escrito pero produzcan resultados distintos para el usuario**.
 
 ```text
-"¿Podría interpretar esto de otra manera?"
+Ejemplo de Fallo en el Test de Implementación Doble:
+Texto en spec.md: "RF-01.2: El vendedor puede modificar una venta registrada."
+
+Interpretación A: Puede modificar cualquier venta de cualquier vendedor en cualquier estado.
+Interpretación B: Solo puede modificar sus propias ventas mientras estén en estado BORRADOR.
+
+Veredicto: FALLA EL TEST → Hallazgo BLOCKING. Debe preguntarse antes de aprobar.
 ```
+
+## 2.2 Test del Implementador Externo Aislado (The Blind Implementer Test)
+
+La IA imagina que un desarrollador externo recibe únicamente `docs/constitution.md` + `docs/specs/XX-feature/spec.md` sin acceso al historial del chat:
+
+* ¿Tendría que preguntarle a alguien de negocio qué pasa cuando un dato es cero, nulo o duplicado?
+* ¿Tendría que adivinar quién tiene permiso para ejecutar una acción?
+* ¿Tendría que inventar qué ocurre con los registros relacionados cuando algo se cancela o elimina?
+
+Si cualquiera de estas respuestas es **SÍ**, es un hallazgo `BLOCKING`.
+
+## 2.3 Test de Caja Negra y No-Invasión Técnica (Black-Box Purity Test)
+
+La IA verifica que el `spec.md` defina comportamiento observable (`Actor` + `Input` + `Contexto` + `Acción` + `Resultado Observable`) y no implementación interna:
+
+* Si detecta jerga de implementación invadiendo los requisitos (ej. `Controller`, `Repository`, `Eloquent`, `SQL VARCHAR(255)`, `HTTP 422`, `Pinia Store`), no bloquea al usuario con preguntas innecesarias, sino que lo clasifica como `IMPROVEMENT` (o nota de traslado a Planning) y limpia la redacción hacia comportamiento funcional sin perder la intención.
+* Asimismo, verifica que no se sobre-especifique cosmética arbitraria (colores hexadecimales, márgenes en píxeles) salvo que tenga valor funcional explícito.
+
+## 2.4 Test de Lenguaje Natural y Cero Negocio Implícito
+
+La IA escanea el documento buscando "palabras trampa" que suelen esconder decisiones no tomadas:
+
+* **Términos vagos sin métrica u objetividad**: *"adecuadamente"*, *"correctamente"*, *"rápidamente"*, *"cuando corresponda"*, *"si es necesario"*, *"usuario autorizado"*, *"datos válidos"*, *"etc."*.
+* **Supuestos disfrazados**: *"por defecto"*, *"normalmente"*, *"se asume que"*, *"lo habitual es"*.
+
+Si una de estas palabras oculta una bifurcación de comportamiento funcional, se marca como `BLOCKING`.
 
 ---
 
-# 4. REGLA DE LA DOBLE INTERPRETACIÓN
+# 3. Matriz de Auditoría en 12 Dimensiones Funcionales
 
-Para cada decisión funcional relevante, la IA debe evaluar:
+La IA debe auditar sistemáticamente el `spec.md` contra estas 12 dimensiones:
 
-```text
-¿Existe una única interpretación razonable?
-```
-
-Si:
-
-```text
-Sí
-→ continuar.
-
-No
-→ preguntar.
-```
-
-Ejemplo:
-
-```text
-"El vendedor puede modificar una venta."
-
-```
-
-Puede significar:
-
-```text
-A) cualquier venta;
-B) solo sus propias ventas;
-C) solo ventas del mismo día;
-D) solo ventas no confirmadas.
-```
-
-Existe ambigüedad.
-
-Debe preguntarse antes de aprobar.
+| # | Dimensión de Auditoría | Qué debe verificar exactamente la IA en `spec.md` |
+| --- | --- | --- |
+| **1** | **Alineación Constitucional** | ¿Respeta 100% `docs/constitution.md` (Lenguaje Ubicuo, actores globales, `INV-BIZ-XX` e `INV-ARCH-XX`)? ¿Usa sinónimos prohibidos (ej. *Comprador* en vez de *Cliente*)? |
+| **2** | **Alcance y Fronteras** | ¿Están claros `In-Scope` y `Out-of-Scope`? ¿Se colaron features ajenas sin definición completa? |
+| **3** | **Actores y Permisos** | Para cada acción (Crear, Ver, Editar, Eliminar, Confirmar, Cancelar, Anular), ¿está explícito qué actor puede ejecutarla y a quién se le bloquea? |
+| **4** | **Entradas y Validaciones** | ¿Están definidos todos los datos de entrada, cuáles son obligatorios/opcionales, sus rangos, formatos, límites y reglas de unicidad funcional? |
+| **5** | **Reglas de Negocio y Cálculos** | ¿Son las reglas (`RB-XX`) objetivas y matemáticas/lógicas? ¿Hay dos requisitos (`RF`) en distintas secciones que se contradigan entre sí? |
+| **6** | **Máquina de Estados y Transiciones** | Si la entidad tiene estados: ¿están definidos todos los estados, el evento/actor que dispara cada cambio, las transiciones prohibidas y qué pasa si se intenta una transición inválida? |
+| **7** | **Dependencias y Estado Vacío (*Zero-State*)** | Cuando una entidad depende de otra (ej. *Producto $\rightarrow$ Categoría*): ¿es obligatoria? ¿Qué ocurre funcionalmente si el catálogo padre está vacío? ¿Qué pasa si el padre se desactiva/elimina? |
+| **8** | **Salidas y Efectos Secundarios** | Cuando la acción tiene éxito, ¿qué cambia exactamente en el sistema (stock, saldos, historial, notificaciones) y qué resultado observable recibe el actor? |
+| **9** | **Errores Observables y Fallos Externos** | ¿Qué experimenta el actor cuando una validación falla o cuando un servicio externo (API, IA, red) no responde? ¿Se bloquea la operación o hay degradación elegante? |
+| **10** | **Casos Borde (*Boundaries*)** | ¿Están cubiertos los límites que cambian el comportamiento (cantidad = 0, negativos, duplicados, listas vacías, concurrencia/doble envío, expiración)? |
+| **11** | **Calidad Gherkin (`SC-XX.Y.Z`)** | ¿Cada escenario tiene un `Given` (contexto real), `When` (acción concreta) y `Then` (resultado observable verificable, no "funciona bien")? |
+| **12** | **Trazabilidad Interna (`HU ↔ RF ↔ SC`)** | ¿Existe algún `HU` sin `RF`, algún `RF` importante sin escenario `SC` que lo valide, algún `SC` huérfano o IDs duplicados? |
 
 ---
 
-# 5. REGLA DE PREGUNTAS MÍNIMAS
+# 4. Clasificación Formal de Hallazgos
 
-Este workflow debe ser exigente con la calidad, pero eficiente con el usuario.
+No toda observación debe detener el proyecto. La IA debe clasificar cada hallazgo con rigor:
 
-No debe realizar un interrogatorio innecesario.
+### 4.1 `BLOCKING` (Bloqueante — Impide aprobar)
 
-Debe:
+* **Criterio**: Obliga a tomar una decisión que cambia el comportamiento funcional del sistema, o representa una contradicción con `constitution.md` u otra sección del `spec.md`.
+* **Acción**: Cambiar o mantener estado en `NEEDS_CLARIFICATION`, formular pregunta con opciones recomendadas y detenerse (`STOP`).
 
-1. detectar todos los problemas;
-2. clasificarlos;
-3. eliminar redundancias;
-4. agrupar problemas dependientes;
-5. preguntar solo lo que requiere decisión humana.
+### 4.2 `IMPORTANT` (Riesgo Funcional Relevante)
 
-La prioridad es:
+* **Criterio**: Una condición secundaria o de fallo externo no está explícita.
+* **Acción**: Si solo existe una forma segura y obvia derivada de `constitution.md`, la IA la documenta explícitamente e informa al usuario. Si admite dos decisiones de negocio distintas, se promueve automáticamente a **`BLOCKING`** y se pregunta.
 
-> **Máxima reducción de ambigüedad con mínima cantidad de preguntas.**
+### 4.3 `IMPROVEMENT` (Mejora Documental No Bloqueante)
 
----
+* **Criterio**: No altera en absoluto la interpretación funcional (ej. orden de secciones, unificar un sinónimo menor con el glosario de `constitution.md`, limpiar un término técnico hacia lenguaje funcional o corregir un ID desordenado).
+* **Acción**: **PROHIBIDO bloquear o hacer preguntas al usuario por pedantería estilística**. Si no hay hallazgos `BLOCKING`, la IA aplica estas mejoras de limpieza directamente al aprobar el documento.
 
-# 6. NO TODA IMPERFECCIÓN BLOQUEA
+### 4.4 `CORRECT` (Dimensión Validada)
 
-Cada hallazgo debe clasificarse.
-
-## 6.1 BLOCKING
-
-Impide implementar correctamente sin inventar comportamiento.
-
-Ejemplos:
-
-```text
-actor ambiguo;
-permiso ambiguo;
-resultado ambiguo;
-regla contradictoria;
-estado sin significado claro;
-alcance abierto;
-comportamiento diferente según interpretación;
-dato crítico cuya obligatoriedad no está definida.
-```
-
-Acción:
-
-```text
-BLOQUEAR
-+
-PREGUNTAR
-```
+* **Criterio**: El punto auditado es claro, unívoco, verificable y consistente.
 
 ---
 
-## 6.2 IMPORTANT
+# 5. Protocolo de Optimización de Preguntas (Cuando `BLOCKING > 0`)
 
-No necesariamente impide toda implementación, pero representa un riesgo funcional relevante.
+Si la auditoría detecta bloqueos, la IA debe ser **implacable con la calidad pero sumamente respetuosa con el tiempo del usuario**:
 
-Ejemplo:
-
+1. **Agrupación por Causa Raíz**: Si 4 requisitos tienen ambigüedad porque falta definir el modelo de permisos de un rol, no hacer 4 preguntas sueltas; formular **1 sola pregunta matricial** que resuelva todo el bloque de autorización de una vez.
+2. **Priorización Estricta (`P0` a `P8`)**:
 ```text
-No está definido qué ocurre ante una dependencia externa
-fallida en una operación importante.
+P0 — Contradicciones (Spec vs. Constitution o RF vs. RF)
+P1 — Alcance ambiguo (In-Scope vs. Out-of-Scope)
+P2 — Actores y permisos indefinidos
+P3 — Flujo principal incompleto
+P4 — Reglas de negocio / cálculos ambiguos
+P5 — Estados y transiciones sin definir
+P6 — Datos esenciales y relaciones ante estado vacío
+P7 — Validaciones de frontera
+P8 — Errores observables y fallos de dependencias externas
 ```
+3. **Opciones Neutrales + Recomendación de Ingeniería**: Cada pregunta debe ofrecer opciones cerradas (`A`, `B`, `C`, `D`) que representen **comportamientos de negocio** (nunca código) e incluir una opción marcada como **`(Recomendada)`** explicando por qué es la más coherente con el dominio.
+4. **Reauditoría tras Respuesta**: Cuando el usuario responde, la IA **no aprueba a ciegas**: verifica primero que la respuesta no haya creado una nueva contradicción con otra regla antes de actualizar `spec.md` y marcar `APPROVED`.
 
-La IA debe determinar si puede existir un comportamiento seguro y no ambiguo.
+---
 
-Si no puede:
+# 6. Manejo de Conflictos Especiales Descubiertos en el QA Gate
+
+* **Conflicto con `docs/constitution.md`**: Si `spec.md` contradice una regla constitucional, `spec.md` **no gana por ser más reciente**. La IA bloquea y pregunta al usuario si desea:
+  * **A)** Corregir `spec.md` para acatar la Constitución, o
+  * **B)** Invocar `/sdd-constitution-trial` para enmendar formalmente la regla global.
+
+* **Conflicto con otro módulo existente (`docs/specs/YY-otro/spec.md`)**: Si la nueva feature altera o contradice una regla de un módulo ya especificado, la IA no modifica el otro módulo en silencio: advierte el impacto e indica si se requerirá ejecutar `/sdd-spec-anchored YY`.
+
+---
+
+# 7. Checklist Final Antes de Otorgar `Status: APPROVED`
+
+La IA solo puede escribir `Status: APPROVED` en la cabecera de `docs/specs/XX-feature/spec.md` cuando el 100% de esta lista se cumpla:
 
 ```text
-→ convertir en BLOCKING.
+[ ] 1. CANDADO DE DISCO: ¿Se garantizó que 0 archivos fuera de docs/specs/XX-feature/spec.md fueron modificados?
+[ ] 2. CERO PÉRDIDA (ZERO-LOSS): ¿Se conservaron íntegros todos los detalles, reglas, datos y escenarios válidos del spec.md sin resumirlos?
+[ ] 3. CONSTITUCIÓN RESPETADA: ¿El vocabulario y las reglas cumplen el 100% de docs/constitution.md?
+[ ] 4. CERO CONTRADICCIONES: ¿HU, RF, RB y SC son internamente consistentes entre sí?
+[ ] 5. ACTORES Y PERMISOS CERRADOS: ¿Se sabe sin dudar quién puede ejecutar cada acción y quién no?
+[ ] 6. DATOS, ESTADOS Y RELACIONES COMPLETOS: ¿Están claros los campos, transiciones de estado y el comportamiento ante catálogos vacíos?
+[ ] 7. ERRORES Y BORDES OBSERVABLES: ¿Están especificados los errores observables y casos límite relevantes en Gherkin?
+[ ] 8. TRAZABILIDAD ÍNTEGRA: ¿Todos los HU → RF → SC están correctamente enlazados y numerados?
+[ ] 9. TESTS SUPERADOS: ¿El documento pasó el Test de Implementación Doble y el Test del Implementador Externo con 0 bloqueos?
 ```
 
 ---
 
-## 6.3 IMPROVEMENT
+# 8. Plantillas Oficiales de Salida en Consola
 
-No afecta la interpretación funcional de la feature.
-
-Ejemplos:
+## 8.1 Salida cuando Existen Bloqueos (`Status: NEEDS_CLARIFICATION` — Modo 100% Read-Only)
 
 ```text
-redacción mejorable;
-orden de una sección;
-duplicación menor;
-texto poco elegante.
+===================================================================
+🔍 SDD-SPEC-CLARIFY — REPORTE DE QA FUNCIONAL (BLOQUEADO)
+===================================================================
+Archivo auditado:
+  docs/specs/XX-feature/spec.md
+
+Transición de Estado:
+  IN_REVIEW ──► NEEDS_CLARIFICATION (Modo 100% Read-Only: sin cambios en disco)
+
+Resumen de Auditoría (12 Dimensiones + Test de Doble Implementación):
+  🔴 BLOCKING:    [X] (Decisiones de negocio ambiguas o contradicciones)
+  🟡 IMPORTANT:   [X] (Riesgos funcionales que requieren confirmación)
+  🔵 IMPROVEMENT: [X] (Ajustes de trazabilidad/limpieza que se aplicarán al aprobar)
+  🟢 CORRECT:     [X]/12 dimensiones validadas sin observaciones
+
+-------------------------------------------------------------------
+DECISIONES REQUERIDAS ANTES DE PASAR A PLANNING:
+-------------------------------------------------------------------
+
+[BLOCKING-01] [Categoría P0–P8: Ej. P5 — Transición de Estado Ambigua]
+- Sección afectada: [RF-01.2 / SC-01.1.2]
+- Problema (Doble Interpretación): [Explicación directa de por qué dos desarrolladores
+  podrían implementar comportamientos distintos con la redacción actual].
+- Pregunta de Resolución: ¿Qué comportamiento debe adoptar el sistema?
+  - A) [Comportamiento funcional A] (Recomendada — [Justificación de negocio/dominio])
+  - B) [Comportamiento funcional B]
+  - C) [Comportamiento funcional C]
+  - D) Otro comportamiento.
+
+[BLOCKING-02] ...
+
+-------------------------------------------------------------------
+⏸️ WORKFLOW DETENIDO: Responde con tus elecciones (ej. "1A, 2B") para
+actualizar spec.md, otorgar Status: APPROVED y habilitar /sdd-planning.
+===================================================================
 ```
 
-No debe bloquear la fase.
-
----
-
-## 6.4 CORRECT
-
-La especificación ya cubre correctamente el punto.
-
----
-
-# 7. REGLA DE BLOQUEO POR DECISIÓN
-
-No se debe utilizar simplemente:
+## 8.2 Salida cuando NO Existen Bloqueos (`Status: APPROVED`)
 
 ```text
-"hay observaciones"
-```
+===================================================================
+✅ SDD-SPEC-CLARIFY — QA GATE SUPERADO (SPECIFICATION APPROVED)
+===================================================================
+Archivo certificado:
+  docs/specs/XX-feature/spec.md
 
-para bloquear o aprobar.
+Transición de Estado:
+  IN_REVIEW ──► APPROVED
 
-Debe evaluarse:
+Garantías de Calidad Aplicadas:
+  🔒 Pre-Execution Lock respetado (0 archivos de código fuente tocados).
+  📦 Preservación Zero-Loss verificada (100% de reglas, datos y escenarios intactos).
+  🧪 Test de Implementación Doble y Test de Implementador Externo: SUPERADOS.
 
-> **¿El hallazgo obliga a tomar una decisión que cambia el comportamiento funcional?**
+Resumen del Dictamen de Auditoría:
+  🔴 BLOCKING:    0
+  🟡 IMPORTANT:   0
+  🔵 IMPROVEMENT: [X] (Mejoras menores de trazabilidad/lenguaje aplicadas in-situ)
+  🟢 CORRECT:     12/12 dimensiones funcionales certificadas
 
-Si sí:
+Trazabilidad Certificada:
+  - Historias de Usuario (HU): [X]
+  - Reglas de Negocio (RB): [X]
+  - Requisitos Funcionales (RF): [X]
+  - Escenarios BDD Gherkin (SC): [X]
 
-```text
-BLOCKING
-```
-
-Si no:
-
-```text
-IMPORTANTE / MEJORA
-```
-
-según corresponda.
-
----
-
-# 8. AUDITORÍA DE CONSTITUCIÓN
-
-La IA debe verificar que `spec.md` respete:
-
-```text
-docs/constitution.md
-```
-
-como fuente superior.
-
-Debe comprobar:
-
-```text
-alcance global;
-actores;
-terminología;
-restricciones;
-principios;
-flujo global;
-integraciones globales;
-políticas globales.
-```
-
-### Contradicción
-
-Ejemplo:
-
-```text
-Constitution:
-Una operación confirmada no puede modificarse.
-
-Spec:
-El cliente puede modificar cualquier operación.
-```
-
-Resultado:
-
-```text
-BLOCKING
-```
-
-La IA no debe elegir unilateralmente qué documento está correcto.
-
-Debe determinar si:
-
-```text
-la Spec está equivocada
-```
-
-o:
-
-```text
-la Constitución necesita evolucionar.
+Siguiente paso recomendado:
+  La especificación funcional está blindada y libre de ambigüedades de negocio.
+  Ahora puedes diseñar la arquitectura técnica y estructura física ejecutando:
+  👉 /sdd-planning
+===================================================================
 ```
 
 ---
 
-# 9. AUDITORÍA DE ALCANCE
+# 9. Regla Maestra de `/sdd-spec-clarify`
 
-Comprobar:
-
-```text
-¿La feature tiene un objetivo único y claro?
-
-¿Lo que se describe realmente pertenece a esta feature?
-
-¿Hay funcionalidades nuevas escondidas dentro del documento?
-
-¿Hay dependencias externas tratadas como si fueran parte
-de la misma feature sin definición?
-```
-
-### Problema típico
-
-```text
-"Registrar venta"
-```
-
-y la Specification termina incluyendo:
-
-```text
-facturación;
-contabilidad;
-reportes;
-notificaciones;
-gestión de usuarios;
-inventario avanzado.
-```
-
-Debe determinarse si:
-
-```text
-pertenece a la feature;
-es un efecto necesario;
-es una dependencia;
-debe convertirse en otra feature.
-```
-
-No ampliar el alcance silenciosamente.
-
----
-
-# 10. AUDITORÍA DE ACTORES
-
-Para cada flujo relevante:
-
-```text
-¿Quién inicia la acción?
-¿Quién puede ejecutarla?
-¿Quién puede observar el resultado?
-¿Quién está prohibido?
-```
-
-Debe detectar expresiones como:
-
-```text
-"usuario autorizado"
-"personal"
-"administrador"
-"responsable"
-"cliente"
-```
-
-cuando el significado no esté establecido.
-
-Si existen dos interpretaciones funcionales posibles:
-
-```text
-→ preguntar.
-```
-
----
-
-# 11. AUDITORÍA DE PERMISOS
-
-Los permisos deben poder determinarse sin inventar.
-
-Para operaciones relevantes:
-
-```text
-Crear
-Consultar
-Actualizar
-Eliminar
-Cancelar
-Confirmar
-Aprobar
-Rechazar
-Anular
-```
-
-debe poder saberse quién puede realizarlas.
-
-No basta con definir:
-
-```text
-"los usuarios autorizados pueden..."
-```
-
-si no está establecido qué usuarios están autorizados.
-
----
-
-# 12. AUDITORÍA DEL FLUJO
-
-La IA debe reconstruir mentalmente el flujo completo:
-
-```text
-Actor
- ↓
-Precondición
- ↓
-Entrada
- ↓
-Acción
- ↓
-Regla
- ↓
-Resultado
- ↓
-Postcondición
-```
-
-Debe detectar saltos como:
-
-```text
-crear → éxito
-```
-
-sin explicar:
-
-```text
-qué debe proporcionar el actor;
-qué condiciones deben cumplirse;
-qué ocurre si falla.
-```
-
----
-
-# 13. AUDITORÍA DE ENTRADAS
-
-Cada operación relevante debe permitir determinar:
-
-```text
-qué necesita el actor;
-qué datos son obligatorios;
-qué datos son opcionales;
-qué valores son válidos;
-qué dependencias existen.
-```
-
-Debe detectar frases como:
-
-```text
-"ingresar los datos necesarios"
-"completar la información"
-"seleccionar un producto válido"
-```
-
-cuando "necesario" o "válido" no esté definido.
-
----
-
-# 14. AUDITORÍA DE SALIDAS
-
-Para cada operación debe poder determinarse:
-
-```text
-¿Qué cambia si tiene éxito?
-
-¿Qué resultado obtiene el actor?
-
-¿Qué estado queda establecido?
-
-¿Qué información puede consultar después?
-```
-
-Ejemplo insuficiente:
-
-```text
-"El sistema registra la venta."
-```
-
-Debe poder saberse:
-
-```text
-¿La venta queda confirmada?
-¿Queda pendiente?
-¿Se modifica inventario?
-¿Se actualiza el historial?
-```
-
-si estas consecuencias forman parte de la feature.
-
----
-
-# 15. AUDITORÍA DE REGLAS DE NEGOCIO
-
-Cada regla debe ser:
-
-```text
-explícita;
-coherente;
-objetiva;
-verificable.
-```
-
-Evitar:
-
-```text
-"El sistema debe comportarse adecuadamente."
-```
-
-Preferir:
-
-```text
-"El sistema debe impedir la operación cuando el stock disponible
-sea menor que la cantidad solicitada."
-```
-
----
-
-# 16. AUDITORÍA DE VALIDACIONES
-
-La IA debe comprobar las validaciones funcionalmente relevantes:
-
-```text
-obligatoriedad;
-rangos;
-formatos;
-límites;
-unicidad;
-dependencias;
-fechas;
-cantidades;
-estados;
-relaciones.
-```
-
-Debe detectar afirmaciones vagas como:
-
-```text
-"precio válido"
-"cantidad válida"
-"fecha correcta"
-"usuario válido"
-```
-
-si no existe una definición observable.
-
----
-
-# 17. AUDITORÍA DE ESTADOS
-
-Cuando una entidad tenga estados, debe comprobarse:
-
-```text
-¿Qué estados existen?
-
-¿Qué significa cada uno?
-
-¿Qué acción produce cada transición?
-
-¿Qué actor puede producirla?
-
-¿Qué transiciones están prohibidas?
-
-¿Qué ocurre ante una operación incompatible con el estado?
-```
-
-Ejemplo:
-
-```text
-BORRADOR
-CONFIRMADO
-CANCELADO
-```
-
-Pero si no está definido si:
-
-```text
-CONFIRMADO → CANCELADO
-```
-
-está permitido, existe una laguna.
-
----
-
-# 18. AUDITORÍA DE TRANSICIONES
-
-Toda transición importante debe tener:
-
-```text
-estado inicial;
-evento/acción;
-actor;
-condición;
-estado final.
-```
-
-Ejemplo:
-
-```text
-BORRADOR
-    ↓ confirmar
-CONFIRMADO
-```
-
-Debe conocerse:
-
-```text
-quién confirma;
-cuándo puede confirmar;
-qué pasa si no cumple las condiciones.
-```
-
----
-
-# 19. AUDITORÍA DE DEPENDENCIAS ENTRE ENTIDADES
-
-Cuando una entidad dependa funcionalmente de otra:
-
-```text
-Producto → Categoría
-Pedido → Cliente
-Detalle → Producto
-Venta → Vendedor
-```
-
-debe comprobarse:
-
-```text
-¿La dependencia es obligatoria?
-¿Puede faltar?
-¿Puede cambiar?
-¿Puede eliminarse?
-¿Puede existir temporalmente sin ella?
-```
-
-La Specification debe responder desde la perspectiva funcional.
-
-No preguntar aquí:
-
-```text
-SET NULL
-CASCADE
-RESTRICT
-nullable FK
-```
-
-porque eso pertenece a Planning.
-
----
-
-# 20. AUDITORÍA DE ESTADOS VACÍOS
-
-Para cualquier dependencia funcional importante, comprobar:
-
-```text
-¿Qué ocurre cuando el conjunto requerido está vacío?
-```
-
-Ejemplo:
-
-```text
-No existen categorías.
-```
-
-La Specification debe poder determinar si:
-
-```text
-la operación no puede realizarse;
-la operación puede realizarse sin categoría;
-el usuario puede crear una categoría;
-existe otro comportamiento.
-```
-
-El mecanismo técnico queda para Planning.
-
----
-
-# 21. AUDITORÍA DE CASOS BORDE
-
-No se deben generar artificialmente decenas de casos.
-
-Se deben detectar aquellos que puedan cambiar el comportamiento.
-
-Ejemplos:
-
-```text
-cantidad = 0
-cantidad negativa
-máximo permitido
-mínimo permitido
-lista vacía
-entidad inexistente
-estado incompatible
-duplicado
-fecha límite
-recurso agotado
-```
-
-La regla es:
-
-> **Un caso borde merece escenario propio cuando su comportamiento puede ser diferente al camino principal.**
-
----
-
-# 22. AUDITORÍA DE ERRORES
-
-Para errores relevantes debe poder determinarse:
-
-```text
-qué condición genera el error;
-si la operación se ejecuta o se bloquea;
-qué resultado queda;
-qué debe observar el actor.
-```
-
-No debe definirse aquí:
-
-```text
-HTTP 400
-HTTP 422
-Exception
-middleware
-```
-
-Esas decisiones pertenecen a Planning.
-
----
-
-# 23. AUDITORÍA DE EFECTOS SECUNDARIOS
-
-Debe comprobarse si una operación modifica otros elementos.
-
-Ejemplo:
-
-```text
-Registrar venta
-    ↓
-Venta creada
-    ↓
-Stock reducido
-    ↓
-Historial actualizado
-```
-
-Si esos efectos forman parte del comportamiento del negocio, deben estar especificados.
-
-Esto evita que Execution implemente solo:
-
-```text
-"crear registro"
-```
-
-y omita consecuencias necesarias.
-
----
-
-# 24. AUDITORÍA DE CRITERIOS DE ACEPTACIÓN
-
-Cada comportamiento relevante debe poder verificarse mediante observaciones.
-
-Un buen criterio debe responder:
-
-```text
-Given
-¿en qué contexto?
-
-When
-¿qué sucede?
-
-Then
-¿qué debe observarse?
-```
-
-Evitar criterios como:
-
-```text
-"El sistema funciona correctamente."
-```
-
-o:
-
-```text
-"La interfaz debe ser intuitiva."
-```
-
-cuando no exista una definición verificable.
-
----
-
-# 25. AUDITORÍA GHERKIN
-
-Los escenarios deben representar comportamiento real.
-
-Ejemplo:
-
-```gherkin
-Scenario: Registrar una venta correctamente
-  Given el vendedor está autenticado
-  And el producto existe y tiene stock disponible
-  When registra una venta con cantidad válida
-  Then la venta queda registrada
-  And el stock disponible se actualiza
-```
-
-La IA debe comprobar que:
-
-```text
-Given
-    ↓
-realmente prepara el contexto
-
-When
-    ↓
-representa la acción
-
-Then
-    ↓
-representa un resultado observable
-```
-
-No debe aceptar escenarios que describan implementación interna.
-
----
-
-# 26. AUDITORÍA DE TRAZABILIDAD
-
-Debe existir una cadena lógica:
-
-```text
-HU
- ↓
-RF
- ↓
-SC
-```
-
-Por ejemplo:
-
-```text
-HU-01
- ├── RF-01.1
- │    ├── SC-01.1.1
- │    └── SC-01.1.2
- │
- └── RF-01.2
-      └── SC-01.2.1
-```
-
-### Debe detectarse:
-
-```text
-HU sin RF;
-RF sin HU cuando debería pertenecer a una historia;
-SC huérfano;
-SC que no cubre ningún requisito;
-IDs duplicados;
-IDs inconsistentes.
-```
-
-Sin embargo:
-
-> **No exigir correspondencia artificial de 1 RF = 1 SC.**
-
-Un requerimiento puede necesitar múltiples escenarios.
-
----
-
-# 27. AUDITORÍA DE COBERTURA
-
-Para cada flujo funcional importante, comprobar cuando corresponda:
-
-```text
-Happy Path
-Error
-Boundary
-Empty State
-Permission
-State Transition
-Dependency Failure
-```
-
-No todos son obligatorios siempre.
-
-El criterio es:
-
-> **¿Existe un escenario cuando una condición relevante cambia el comportamiento?**
-
----
-
-# 28. AUDITORÍA DE LENGUAJE
-
-Debe detectar:
-
-```text
-sinónimos involuntarios;
-nombres inconsistentes;
-conceptos duplicados;
-términos no definidos;
-uso inconsistente de singular/plural;
-actor nombrado de diferentes formas.
-```
-
-Ejemplo:
-
-```text
-Cliente
-Comprador
-Usuario comprador
-```
-
-La IA debe determinar si:
-
-```text
-son conceptos distintos
-```
-
-o:
-
-```text
-representan el mismo concepto.
-```
-
----
-
-# 29. AUDITORÍA DE NEGOCIO VS IMPLEMENTACIÓN
-
-La Specification debe describir:
-
-```text
-qué hace el sistema.
-```
-
-No:
-
-```text
-cómo está construido.
-```
-
-Detectar lenguaje como:
-
-```text
-controller;
-repository;
-service;
-DTO;
-ORM;
-SQL;
-migration;
-endpoint;
-component;
-database table;
-middleware;
-```
-
-Si aparecen, verificar si realmente representan una restricción funcional.
-
-De lo contrario:
-
-```text
-→ marcar como DETAIL OUT OF SCOPE FOR SPEC
-```
-
-y trasladarlo a Planning.
-
----
-
-# 30. AUDITORÍA DE UI
-
-La Spec puede describir:
-
-```text
-resultado visible;
-mensaje funcional;
-estado;
-acción disponible;
-error observable.
-```
-
-No debe exigir:
-
-```text
-color;
-píxeles;
-posición;
-animación;
-tipografía;
-estructura cosmética.
-```
-
-Un detalle de UI solo debe permanecer si tiene relevancia para comportamiento, accesibilidad o regla funcional.
-
----
-
-# 31. AUDITORÍA DE DUPLICACIÓN
-
-La IA debe detectar reglas repetidas de forma potencialmente contradictoria.
-
-Ejemplo:
-
-```text
-RF-01:
-Una venta confirmada no puede modificarse.
-
-RF-05:
-El vendedor puede modificar ventas confirmadas.
-```
-
-Aunque cada requisito parezca claro individualmente, juntos producen conflicto.
-
-Debe evaluarse la coherencia **global del documento**, no solo cada sección aisladamente.
-
----
-
-# 32. AUDITORÍA DE DEPENDENCIAS EXTERNAS
-
-Si una feature depende de:
-
-```text
-otra feature;
-servicio externo;
-catálogo;
-usuario;
-hardware;
-integración.
-```
-
-debe estar claro funcionalmente:
-
-```text
-qué dependencia existe;
-qué necesita la feature;
-qué ocurre si no está disponible;
-si la dependencia es obligatoria.
-```
-
-El diseño técnico queda para Planning.
-
----
-
-# 33. TEST DE IMPLEMENTACIÓN DOBLE
-
-Una técnica obligatoria de este QA Gate es intentar producir mentalmente dos implementaciones funcionales distintas.
-
-### Test:
-
-```text
-¿Puedo implementar esta especificación de dos formas
-que ambas parezcan correctas leyendo únicamente el documento,
-pero produzcan comportamientos distintos?
-```
-
-Si:
-
-```text
-NO
-→ continuar.
-
-SÍ
-→ existe una ambigüedad funcional.
-```
-
-Este test es uno de los principales mecanismos para detectar especificaciones aparentemente completas pero realmente ambiguas.
-
----
-
-# 34. TEST DE IMPLEMENTADOR EXTERNO
-
-La IA debe imaginar:
-
-> "Otro desarrollador recibe únicamente `constitution.md` + `spec.md`."
-
-Entonces preguntar:
-
-```text
-¿Podría implementar la feature sin preguntarle al negocio?
-
-¿Tendría que decidir una regla por su cuenta?
-
-¿Tendría que adivinar un permiso?
-
-¿Tendría que inventar un estado?
-
-¿Tendría que decidir qué sucede ante un error?
-```
-
-Si cualquiera de esas respuestas es sí para una decisión funcional relevante:
-
-```text
-→ BLOCKING
-```
-
----
-
-# 35. REGLA DE NO TRASLADAR AMBIGÜEDADES A PLANNING
-
-No utilizar Planning como mecanismo para resolver decisiones que pertenecen al negocio.
-
-Incorrecto:
-
-```text
-Spec:
-"Al cancelar ocurre lo correspondiente."
-
-Planning:
-"Decidimos conservar la reserva como cancelada."
-```
-
-Correcto:
-
-```text
-Spec-Clarify:
-Pregunta qué debe ocurrir.
-
-Usuario:
-Decide.
-
-Spec:
-Documenta la decisión.
-
-Planning:
-Diseña cómo implementarla.
-```
-
----
-
-# 36. PROTOCOLO DE PREGUNTAS
-
-Cuando se detecten BLOCKING o IMPORTANT que requieran decisión humana:
-
-La IA debe:
-
-1. agrupar problemas relacionados;
-2. eliminar preguntas redundantes;
-3. priorizar las de mayor impacto;
-4. presentar opciones neutrales;
-5. formular la mínima cantidad necesaria;
-6. detenerse.
-
----
-
-# 37. PRIORIZACIÓN
-
-Orden:
-
-```text
-P0 — Contradicción
-P1 — Alcance ambiguo
-P2 — Actor / permiso
-P3 — Flujo
-P4 — Regla de negocio
-P5 — Estado / transición
-P6 — Datos
-P7 — Validación
-P8 — Error / borde
-P9 — Mejora documental
-```
-
-No preguntar P9 mientras exista P0–P4 pendiente.
-
----
-
-# 38. AGRUPACIÓN DE PREGUNTAS
-
-Cuando varias observaciones tengan la misma causa, agruparlas.
-
-Ejemplo:
-
-En lugar de:
-
-```text
-¿Quién puede cancelar?
-¿Quién puede modificar?
-¿Quién puede aprobar?
-```
-
-si todo depende del mismo modelo de autorización, formular una pregunta estructurada:
-
-```text
-¿Cómo debe distribuirse la autorización de operaciones
-sobre una venta?
-
-- Crear
-- Modificar
-- Cancelar
-- Confirmar
-```
-
-Esto reduce rondas y evita preguntas repetitivas.
-
-No agrupar decisiones que sean independientes y puedan generar confusión.
-
----
-
-# 39. OPCIONES NEUTRALES
-
-Cuando una pregunta requiera facilitar la respuesta, usar:
-
-```text
-A)
-B)
-C)
-D) Otro
-```
-
-Las opciones deben representar comportamientos.
-
-No deben presentar una implementación técnica como decisión funcional.
-
----
-
-# 40. REAUDITORÍA DESPUÉS DE RESPUESTAS
-
-Después de que el usuario responda:
-
-```text
-NO actualizar y finalizar inmediatamente.
-```
-
-Primero:
-
-```text
-procesar respuesta
-    ↓
-actualizar modelo mental
-    ↓
-buscar contradicciones nuevas
-    ↓
-buscar ambigüedades derivadas
-    ↓
-verificar dependencias
-```
-
-Una respuesta puede resolver:
-
-```text
-¿quién puede cancelar?
-```
-
-y generar otra pregunta:
-
-```text
-¿qué ocurre con una venta cancelada que ya fue confirmada?
-```
-
-Por tanto:
-
-> **Toda respuesta debe activar una nueva auditoría.**
-
----
-
-# 41. MODIFICACIÓN DEL `spec.md`
-
-Cuando el usuario responda preguntas de Clarify, la IA debe actualizar:
-
-```text
-docs/specs/XX-feature/spec.md
-```
-
-preservando:
-
-```text
-IDs;
-trazabilidad;
-decisiones ya válidas;
-estructura;
-contenido no afectado.
-```
-
-No debe reescribir innecesariamente todo el documento.
-
----
-
-# 42. ESTADO DEL SPEC DURANTE CLARIFY
-
-Estados permitidos:
-
-```text
-DRAFT
-IN_REVIEW
-NEEDS_CLARIFICATION
-APPROVED
-SUPERSEDED
-```
-
-### Al detectar problemas
-
-```text
-NEEDS_CLARIFICATION
-```
-
-### Después de resolverlos
-
-```text
-IN_REVIEW
-```
-
-### Después de la auditoría final sin bloqueos
-
-```text
-APPROVED
-```
-
----
-
-# 43. CRITERIO DE APPROVED
-
-El `spec.md` puede pasar a:
-
-```text
-Status: APPROVED
-```
-
-únicamente cuando:
-
-```text
-[ ] Constitution es respetada.
-[ ] No existen contradicciones relevantes.
-[ ] El alcance está definido.
-[ ] Los actores están claros.
-[ ] Los permisos relevantes están claros.
-[ ] El flujo principal está definido.
-[ ] Las entradas relevantes están definidas.
-[ ] Los resultados relevantes están definidos.
-[ ] Las reglas de negocio están definidas.
-[ ] Los estados relevantes están definidos.
-[ ] Las transiciones relevantes están definidas.
-[ ] Los errores relevantes son observables.
-[ ] Los casos borde importantes están cubiertos.
-[ ] Las dependencias funcionales están claras.
-[ ] Los criterios de aceptación son verificables.
-[ ] La trazabilidad HU → RF → SC es coherente.
-[ ] No hay terminología contradictoria.
-[ ] No hay decisiones técnicas invadiendo Spec.
-[ ] No hay decisiones de negocio implícitas.
-[ ] Un implementador externo no necesitaría inventar comportamiento funcional.
-```
-
----
-
-# 44. NO APROBAR POR "SUFICIENTEMENTE BUENO"
-
-No se debe aprobar porque:
-
-```text
-"parece claro";
-"seguramente se entiende";
-"normalmente sería así";
-"el desarrollador sabrá qué hacer";
-```
-
-Debe aprobarse porque:
-
-```text
-la información necesaria está documentada
-y
-las decisiones funcionales relevantes están determinadas.
-```
-
----
-
-# 45. NO BLOQUEAR POR PEDANTERÍA
-
-El propósito del gate no es encontrar problemas artificiales.
-
-No bloquear por:
-
-```text
-redacción estilística;
-preferencias personales;
-orden alternativo;
-detalle visual;
-nombres internos;
-decisiones técnicas;
-micro-mejoras.
-```
-
-La pregunta siempre debe ser:
-
-> **¿Esto puede provocar una interpretación funcional diferente?**
-
-Si no:
-
-```text
-NO BLOCK.
-```
-
----
-
-# 46. REPORTE DE QA
-
-Cuando finalice la auditoría, presentar un resumen estructurado:
-
-```text
-Spec:
-docs/specs/XX-feature/spec.md
-
-Estado anterior:
-IN_REVIEW
-
-Hallazgos:
-BLOCKING: X
-IMPORTANT: X
-IMPROVEMENT: X
-CORRECT: X
-```
-
-Para cada bloqueo:
-
-```text
-BLOCKING-01
-Problema:
-...
-
-Impacto:
-...
-
-Pregunta:
-...
-```
-
-No realizar preguntas redundantes.
-
----
-
-# 47. SALIDA CUANDO EXISTEN BLOQUEOS
-
-Ejemplo:
-
-```text
-Estado:
-NEEDS_CLARIFICATION
-
-Se detectaron decisiones funcionales que deben resolverse
-antes de aprobar la Specification.
-
-BLOCKING-01
-Problema:
-No está definido si una venta confirmada puede cancelarse.
-
-Impacto:
-Existen dos comportamientos funcionales válidos.
-
-Pregunta:
-¿Qué debe ocurrir?
-
-A) Puede cancelarse.
-B) No puede cancelarse.
-C) Puede anularse, pero no cancelarse.
-D) Depende del estado.
-E) Otro comportamiento.
-```
-
-Después:
-
-```text
-STOP
-```
-
-No continuar a Planning.
-
----
-
-# 48. SALIDA CUANDO NO HAY BLOQUEOS
-
-```text
-Specification QA completado.
-
-Archivo:
-docs/specs/XX-feature/spec.md
-
-Resultado:
-APPROVED
-
-Hallazgos:
-BLOCKING: 0
-IMPORTANT: 0
-IMPROVEMENT: X
-
-La Specification es suficientemente precisa
-para iniciar Planning.
-
-Siguiente paso:
-/sdd-planning
-```
-
----
-
-# 49. CAMBIOS DE ALCANCE DESCUBIERTOS DURANTE CLARIFY
-
-Si durante la revisión aparece una necesidad que realmente es otra feature:
-
-```text
-NO introducirla silenciosamente.
-```
-
-Debe clasificarse:
-
-```text
-Nueva feature
-Cambio de alcance
-Dependencia
-Cambio constitucional
-```
-
-y dirigirse al workflow correspondiente.
-
----
-
-# 50. CONTRADICCIÓN CONSTITUCIONAL
-
-Si Clarify descubre una contradicción entre:
-
-```text
-Constitution
-```
-
-y:
-
-```text
-Spec
-```
-
-la Specification no debe "ganar" por ser más reciente.
-
-Debe detenerse y determinarse si corresponde:
-
-```text
-corregir Spec
-```
-
-o:
-
-```text
-actualizar Constitution mediante:
-/sdd-constitution-trial
-```
-
----
-
-# 51. PROBLEMAS DESCUBIERTOS EN FEATURES RELACIONADAS
-
-Si Clarify descubre que otra Specification está causando contradicción:
-
-```text
-NO modificarla silenciosamente.
-```
-
-Debe identificar:
-
-```text
-spec afectada;
-regla conflictiva;
-impacto;
-workflow necesario.
-```
-
-Cuando corresponda:
-
-```text
-/sdd-spec-anchored
-```
-
----
-
-# 52. TEST DE CONSISTENCIA GLOBAL
-
-Al finalizar, comprobar:
-
-```text
-Constitution
-    ↕
-Spec
-
-HU
-    ↕
-RF
-    ↕
-SC
-
-Actor
-    ↕
-Permission
-
-State
-    ↕
-Transition
-
-Input
-    ↕
-Validation
-
-Action
-    ↕
-Outcome
-
-Dependency
-    ↕
-Behavior
-```
-
-Cualquier contradicción relevante debe impedir `APPROVED`.
-
----
-
-# 53. TEST DE CAJA NEGRA
-
-La IA debe ignorar mentalmente cómo podría implementarse.
-
-Debe leer únicamente:
-
-```text
-Actor
-+
-Input
-+
-Context
-+
-Action
-+
-Expected Result
-```
-
-y comprobar si el comportamiento está completamente definido.
-
-Esta técnica evita que conocimiento técnico externo "complete" silenciosamente una Specification.
-
----
-
-# 54. TEST DE LENGUAJE NATURAL
-
-Releer el documento como una persona no involucrada en su creación.
-
-Detectar:
-
-```text
-"etc."
-"y demás"
-"cuando sea necesario"
-"si corresponde"
-"adecuadamente"
-"correctamente"
-"apropiado"
-"válido"
-"permitido"
-```
-
-y determinar si esas expresiones tienen significado definido.
-
-No todas son automáticamente errores.
-
-Solo bloquear cuando permitan múltiples comportamientos funcionales.
-
----
-
-# 55. TEST DE AUSENCIA DE NEGOCIO IMPLÍCITO
-
-Buscar cualquier decisión introducida mediante frases como:
-
-```text
-por defecto;
-normalmente;
-se espera;
-se asume;
-generalmente;
-se recomienda;
-```
-
-Si la frase representa una regla funcional real:
-
-```text
-→ preguntar / convertir en decisión explícita.
-```
-
-Si es una simple aclaración no normativa:
-
-```text
-→ puede mantenerse.
-```
-
----
-
-# 56. TEST DE NO INVASIÓN TÉCNICA
-
-Antes de aprobar:
-
-```text
-¿La Specification está describiendo comportamiento
-o está describiendo implementación?
-```
-
-Si contiene implementación innecesaria:
-
-```text
-→ extraerla conceptualmente hacia Planning.
-```
-
-No bloquear únicamente por su presencia si no cambia la interpretación funcional, pero debe mantenerse la separación documental.
-
----
-
-# 57. REGLA DE PERSISTENCIA DEL SIGNIFICADO
-
-Cambios de redacción no deben cambiar accidentalmente la semántica.
-
-Cuando se edite una Specification durante Clarify:
-
-```text
-preservar decisiones confirmadas;
-preservar IDs;
-preservar trazabilidad;
-no cambiar comportamiento no relacionado;
-no eliminar reglas por accidente.
-```
-
----
-
-# 58. AUDITORÍA FINAL OBLIGATORIA
-
-Antes de aprobar:
-
-```text
-[ ] Releer Constitution
-[ ] Releer Spec completa
-[ ] Detectar contradicciones
-[ ] Detectar ambigüedades
-[ ] Detectar decisiones implícitas
-[ ] Detectar estados incompletos
-[ ] Detectar permisos incompletos
-[ ] Detectar errores incompletos
-[ ] Detectar dependencias incompletas
-[ ] Verificar HU → RF → SC
-[ ] Verificar escenarios
-[ ] Ejecutar test de doble implementación
-[ ] Ejecutar test de implementador externo
-[ ] Verificar que Planning no tenga que inventar negocio
-```
-
----
-
-# 59. REGLA DE APROBACIÓN FINAL
-
-Solo se permite:
-
-```text
-Status: APPROVED
-```
-
-cuando:
-
-> **La Specification pueda ser entregada a un equipo técnico y estos puedan diseñar la implementación sin tener que tomar decisiones de negocio no documentadas.**
-
-No significa que:
-
-```text
-la arquitectura esté definida;
-la base de datos esté diseñada;
-los archivos estén definidos;
-las tareas estén creadas;
-el código esté escrito.
-```
-
-Eso corresponde a las fases posteriores.
-
----
-
-# 60. FLUJO COMPLETO
-
-```text
-/sdd-spec-clarify
-        ↓
-Identificar spec
-        ↓
-Leer Constitution
-        ↓
-Leer Spec
-        ↓
-Auditar alcance
-        ↓
-Auditar actores
-        ↓
-Auditar permisos
-        ↓
-Auditar flujo
-        ↓
-Auditar reglas
-        ↓
-Auditar estados
-        ↓
-Auditar datos
-        ↓
-Auditar errores
-        ↓
-Auditar casos borde
-        ↓
-Auditar dependencias
-        ↓
-Auditar criterios
-        ↓
-Auditar trazabilidad
-        ↓
-Test de doble implementación
-        ↓
-Test de implementador externo
-        ↓
-¿Problemas funcionales?
-   │
-   ├── SÍ
-   │    ↓
-   │  Clasificar
-   │    ↓
-   │  Priorizar
-   │    ↓
-   │  Agrupar
-   │    ↓
-   │  Preguntar
-   │    ↓
-   │  STOP
-   │
-   └── NO
-        ↓
-     Auditoría final
-        ↓
-     APPROVED
-        ↓
-   /sdd-planning
-```
-
----
-
-# 61. REGLA MAESTRA
-
-> **`/sdd-spec-clarify` debe intentar demostrar que la Specification está equivocada antes de permitir que avance.**
-
-> **Si encuentra una decisión funcional que puede interpretarse de más de una manera razonable, debe preguntar.**
-
-> **Si no encuentra ninguna ambigüedad relevante, debe aprobar sin inventar trabajo adicional.**
-
-La regla operacional es:
-
-```text
-AUDITAR
-   ↓
-CUESTIONAR
-   ↓
-DETECTAR
-   ↓
-CLASIFICAR
-   ↓
-PREGUNTAR SI ES NECESARIO
-   ↓
-STOP
-   ↓
-RECIBIR RESPUESTA
-   ↓
-ACTUALIZAR
-   ↓
-REAUDITAR
-   ↓
-¿SIGUE HABIENDO AMBIGÜEDAD?
-   ├── SÍ → PREGUNTAR
-   │
-   └── NO
-        ↓
-     APPROVED
-        ↓
-   /sdd-planning
-```
-
-La finalidad de este workflow es proteger la frontera más importante del SDD:
-
-```text
-NEGOCIO
-   ↓
-SPECIFICATION
-   ↓
-ARQUITECTURA
-   ↓
-IMPLEMENTACIÓN
-```
-
-Una decisión que todavía pertenece al negocio **no debe cruzar esa frontera como una suposición técnica**.
+> `/sdd-spec-clarify` es el guardián de la frontera entre el negocio y la ingeniería: intenta demostrar que la especificación puede malinterpretarse antes de dejarla avanzar; si encuentra una sola decisión de negocio con dos lecturas posibles, detiene el flujo y pregunta con precisión; si no encuentra ninguna, certifica `Status: APPROVED` sin inventar burocracia artificial.

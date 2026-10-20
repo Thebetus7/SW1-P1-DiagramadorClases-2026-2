@@ -89,6 +89,7 @@ export interface UmlClassData {
   stereotype?: string;
   attributes: (UmlAttribute | string)[];
   methods: (UmlMethod | string)[];
+  isHighlighted?: boolean;
 }
 
 export interface UmlNoteData {
@@ -96,12 +97,77 @@ export interface UmlNoteData {
 }
 
 export interface WebSocketMessage {
-  type: "JOIN" | "LEAVE" | "SYNC_CANVAS" | "NODE_CHANGE" | "PRESENCE" | "CURSOR_MOVE" | "NODE_MOVE";
+  type:
+    | "JOIN"
+    | "LEAVE"
+    | "SYNC_CANVAS"
+    | "NODE_CHANGE"
+    | "PRESENCE"
+    | "CURSOR_MOVE"
+    | "NODE_MOVE"
+    | "CHAT_MESSAGE"
+    | "PROACTIVE_SUGGESTION"
+    | "PROPOSAL_RESOLVED";
   diagramId: number;
   userId: number;
   userName: string;
-  userRole: "CREADOR" | "COLABORADOR";
+  userRole: "CREADOR" | "COLABORADOR" | "SISTEMA";
   payload: string;
   timestamp?: number;
+}
+
+// ==========================================
+// Extensiones Copilot IA Chat y Visor Móvil
+// ==========================================
+
+export type CopilotMode = "CHAT" | "EDITOR";
+
+export type ChatSenderType = "USER" | "COPILOT" | "SYSTEM";
+
+export type ChatMessageType =
+  | "CHAT_MESSAGE"
+  | "EDITOR_PROPOSAL"
+  | "PROACTIVE_SUGGESTION"
+  | "ERROR_ALERT";
+
+export type ProposalStatus = "PENDING" | "ACCEPTED" | "IGNORED" | "EXPIRED";
+
+export interface ChatProposalPayload {
+  summary: string;
+  nodesDelta?: any[];
+  edgesDelta?: any[];
+  status?: ProposalStatus;
+  affectedNodeIds?: string[];
+  resolvedByUserId?: number | null;
+  resolvedByUserName?: string | null;
+  resolvedAt?: string | null;
+}
+
+export interface ChatMessage {
+  id?: string;
+  diagramId: number;
+  senderType: ChatSenderType;
+  userId?: number | null;
+  userName: string;
+  mode: CopilotMode;
+  messageType: ChatMessageType;
+  content: string;
+  taggedUserName?: string | null;
+  proposalJson?: string | null;
+  proposal?: ChatProposalPayload | null;
+  proposalStatus?: ProposalStatus;
+  resolvedByUserId?: number | null;
+  resolvedByUserName?: string | null;
+  resolvedAt?: string | null;
+  isError?: boolean;
+  errorMessage?: string | null;
+  createdAt?: string;
+}
+
+export interface MobileLinkPayload {
+  diagramId: number;
+  accessUrl: string;
+  wsEndpoint: string;
+  qrPayload: string;
 }
 

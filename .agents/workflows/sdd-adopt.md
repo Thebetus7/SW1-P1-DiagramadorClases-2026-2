@@ -1,39 +1,39 @@
 # SDD-Adopt: Adopción e Ingeniería Inversa de SDD en Proyectos Existentes (Brownfield)
 
-Este workflow es el **motor de onboarding e ingeniería inversa** del framework SDD. Su propósito es incorporar formalmente la metodología **Spec-Driven Development** en **proyectos existentes, avanzados o heredados (*legacy*)** que fueron construidos sin especificaciones previas, protegiendo el código en producción, respetando los contratos vigentes y estableciendo una línea base documental sólida.
+Este workflow es el **motor de onboarding e ingeniería inversa exhaustiva** del framework SDD. Su propósito es acoplar la metodología **Spec-Driven Development** en **proyectos existentes, avanzados o heredados (*legacy*)** que fueron construidos sin especificaciones previas, protegiendo el código en producción, forzando una auditoría forense del sistema y estableciendo una **Línea Base Modular Explícita** en `docs/specs/00-baseline/`.
 
 `/sdd-adopt` ejecuta:
 
-* la inspección pasiva, no destructiva y exhaustiva del código fuente real;
-* la extracción de la **Constitución De Facto** (`docs/constitution.md`);
-* la generación y calibración del archivo maestro `AGENTS.md` con los comandos reales del proyecto;
-* la creación del **Inventario de Módulos y Línea Base** (`docs/specs/00-baseline/inventory.md`);
-* el mapeo de contratos públicos existentes (endpoints, schemas de BD, eventos);
-* la definición de la estrategia de coexistencia entre código legado y nuevo desarrollo bajo SDD.
+* la inspección física obligatoria y no destructiva en **6 Ejes de Descubrimiento**;
+* la consolidación de la **Constitución De Facto** (`docs/constitution.md`);
+* la generación y calibración del archivo maestro `AGENTS.md` con comandos reales de verificación;
+* la creación de la **Suite Documental de Línea Base Modular** en `docs/specs/00-baseline/` (`00_INDICE_BASELINE.md` a `05_DEUDA_TECNICA_Y_RIESGOS.md`);
+* el levantamiento de contratos de API, modelos de persistencia, flujos de usuario y matriz de riesgos;
+* la definición de la hoja de ruta de coexistencia entre código legado y nuevo desarrollo bajo SDD.
 
 ---
 
-# 0. REGLA SUPREMA — CODEBASE IS KING & CERO DESTRUCCIÓN
+# 0. REGLA SUPREMA — CODEBASE IS KING, CERO DESTRUCCIÓN Y ANÁLISIS FORZADO
 
 Esta regla tiene **precedencia absoluta dentro de este workflow**.
 
-1. **La Verdad Reside en el Código Real**: En proyectos existentes, el código fuente ya materializó cientos de decisiones funcionales y técnicas. La IA **NO DEBE INVENTAR** un stack idealizado, ni asumir librerías que no están instaladas, ni imponer arquitecturas incompatibles con lo que ya corre.
-2. **Prohibición Total de Edición o Borrado de Código**: `/sdd-adopt` es un proceso puramente documental, analítico y de gobernanza. **ESTÁ TERMINANTEMENTE PROHIBIDO** crear, modificar o eliminar archivos de código de producción (`src/`, `lib/`, `backend/`, `frontend/`, etc.) durante este comando.
-3. **Preservación Incondicional de Contratos Vigentes**: Todo endpoint expuesto, interfaz pública, modelo de persistencia o contrato de integración ya existente se considera un compromiso activo con clientes o servicios externos y no puede alterarse arbitrariamente.
-4. **Detección sin Suposiciones Silenciosas**: Ante dudas sobre módulos muertos (*dead code*), librerías en desuso o intención de negocio, la IA **DEBE PREGUNTAR** al usuario en lugar de asumir.
+1. **La Verdad Reside en el Código Real**: En proyectos existentes, el código fuente ya materializó cientos de decisiones funcionales y técnicas. La IA **NO DEBE INVENTAR** un stack idealizado, ni asumir librerías ausentes, ni proyectar arquitecturas hipotéticas que no correspondan con la realidad del repositorio.
+2. **Prohibición Total de Edición o Borrado de Código**: `/sdd-adopt` es un proceso puramente documental, analítico y de gobernanza. **ESTÁ TERMINANTEMENTE PROHIBIDO** crear, modificar o eliminar archivos de código de producción (`src/`, `lib/`, `backend/`, `frontend/`, etc.) durante este workflow.
+3. **Prohibición de Escaneo Superficial (*Shallow Scan*)**: La IA **NO PUEDE** limitarse a leer únicamente el `package.json` o el `README.md`. Tiene la **obligación física** de inspeccionar los archivos fuente clave en los 6 ejes de auditoría antes de emitir cualquier documento. Si un eje no aplica (ej. el proyecto no tiene frontend por ser una API pura), la IA debe certificar dicha ausencia tras verificar físicamente la estructura de directorios.
+4. **Preservación Incondicional de Contratos Vigentes**: Todo endpoint expuesto, interfaz pública o tabla de base de datos en producción representa un compromiso activo y no puede alterarse sin una especificación formal aprobada (`/sdd-spec-anchored`).
 
 ---
 
 # 1. Jerarquía de Precedencia Adaptada para Proyectos Brownfield
 
-Para proyectos existentes bajo adopción SDD, la jerarquía de verdad y precedencia se calibra de la siguiente manera:
+Para proyectos existentes bajo adopción SDD, la jerarquía de verdad y precedencia por ámbito se define como:
 
 ```mermaid
 flowchart TD
 
-    C["1. Constitution (docs/constitution.md)<br/>Misión global y reglas innegociables"]
-    E["2. Existing Verified Contracts<br/>APIs públicas, schemas BD y código estable"]
-    S["3. Specification (docs/specs/XX/spec.md)<br/>QUÉ funcional para nuevas features/refactors"]
+    C["1. Constitution (docs/constitution.md)<br/>Misión global, límites y reglas innegociables"]
+    E["2. Existing Verified Contracts (docs/specs/00-baseline/)<br/>Línea Base: APIs públicas, persistencia y flujos estables"]
+    S["3. Specification (docs/specs/XX/spec.md)<br/>QUÉ funcional para nuevas features o refactors"]
     P["4. Planning (docs/specs/XX/plan.md)<br/>CÓMO técnico respetando la arquitectura base"]
     T["5. Tasks (docs/specs/XX/tasks.md)<br/>Descomposición atómica ejecutable"]
     K["6. Implementation (Code + Tests)<br/>Código guiado con cero regresiones"]
@@ -45,160 +45,163 @@ flowchart TD
     T --> K
 ```
 
-### Principio de No Regresión
+### Principio de Invariante de No Regresión
 > Ningún nuevo desarrollo, refactorización o corrección puede romper los contratos preexistentes catalogados en la Línea Base, a menos que exista una especificación formal aprobada (`/sdd-spec-anchored`) que documente explícitamente el cambio de contrato y su migración.
 
 ---
 
 # 2. Las 5 Fases Operativas de `/sdd-adopt`
 
-El asistente debe ejecutar ordenadamente las siguientes fases:
-
 ```text
-[FASE 1: Deep Scan Pasivo]
-        ↓
-[FASE 2: Calibración de AGENTS.md]
-        ↓
+[FASE 1: Full System Scan en 6 Ejes Obligatorios]
+                        ↓
+[FASE 2: Calibración de AGENTS.md (Gobernanza Brownfield)]
+                        ↓
 [FASE 3: Constitución De Facto (docs/constitution.md)]
-        ↓
-[FASE 4: Inventario y Línea Base (docs/specs/00-baseline/)]
-        ↓
-[FASE 5: Hoja de Ruta de Transición]
+                        ↓
+[FASE 4: Suite Documental de Línea Base (docs/specs/00-baseline/)]
+                        ↓
+[FASE 5: Hoja de Ruta de Transición y Cierre]
 ```
 
 ---
 
-## FASE 1: Deep Scan e Inspección Pasiva del Repositorio
+## FASE 1: Full System Scan en 6 Ejes Obligatorios (Inspección Forzada)
 
-El asistente debe inspeccionar el repositorio mediante herramientas de lectura (`view_file`, `list_dir`, `grep_search`), recolectando evidencia física sobre:
+Antes de generar cualquier documento, el asistente **DEBE LEER** evidencia concreta en los siguientes 6 ejes:
 
-### 1.1 Manifests de Dependencias y Stack Tecnológico
-* **JavaScript / TypeScript**: Inspeccionar `package.json`, `pnpm-lock.yaml`, `package-lock.json`, `tsconfig.json`.
-* **Java / Kotlin**: Inspeccionar `pom.xml` o `build.gradle`, detectando versión de Spring Boot / Quarkus / etc.
-* **Python**: Inspeccionar `requirements.txt`, `pyproject.toml`, `Pipfile`, `setup.py`.
-* **Dart / Flutter**: Inspeccionar `pubspec.yaml`.
-* **C# / .NET**: Inspeccionar archivos `.csproj`, `.sln`.
-* **Go / Rust / PHP**: Inspeccionar `go.mod`, `Cargo.toml`, `composer.json`.
+### Eje 1: Configuración, Entorno e Infraestructura
+* **Manifests**: Inspeccionar `package.json`, `pom.xml`, `build.gradle`, `requirements.txt`, `pyproject.toml`, `pubspec.yaml`, `go.mod`, etc.
+* **Entornos y Secretos**: Inspeccionar `.env.example`, `.env.local.example`, variables requeridas y puertos expuestos.
+* **Contenedores**: Inspeccionar `docker-compose.yml`, Dockerfiles de cada servicio y redes configuradas.
 
-### 1.2 Persistencia y Modelos de Datos
-* Localizar esquemas y migraciones: `prisma/schema.prisma`, entidades TypeORM, migraciones Flyway/Liquibase, modelos JPA `@Entity`, migraciones Alembic, schemas SQL puros o scripts de inicialización.
-* Identificar motor de base de datos objetivo: PostgreSQL, MySQL, SQLite, MongoDB, Redis, etc.
+### Eje 2: Persistencia, Modelos y Esquemas de Datos
+* Localizar y leer los schemas de datos reales: `schema.prisma`, entidades JPA (`@Entity`), TypeORM, Sequelize, SQLAlchemy, scripts `.sql` o migraciones (Flyway, Alembic, etc.).
+* Identificar motor de base de datos activo (PostgreSQL, MySQL, SQLite, Mongo) y convenciones de nombres de tablas y columnas.
 
-### 1.3 Infraestructura, Entorno y Configuración
-* Inspeccionar `docker-compose.yml`, `Dockerfile`, `.env.example`, variables de entorno requeridas, puertos configurados y servicios auxiliares.
+### Eje 3: Backend, Enrutamiento y Controladores
+* Inspeccionar controladores, routers o handlers del backend para catalogar los endpoints existentes.
+* Identificar middlewares activos (autenticación JWT, CORS, validación de schemas con Zod/Joi/BeanValidation).
 
-### 1.4 Comandos de Verificación Reales (Tooling)
-* Identificar los scripts reales del proyecto:
-  * **Test Runner**: runner configurado (ej: `npm test`, `./mvnw test`, `pytest`, `flutter test`).
-  * **Linter / Formatter**: (ej: `eslint`, `prettier`, `checkstyle`, `flake8`).
-  * **Typecheck / Compiler**: (ej: `tsc --noEmit`, `./mvnw compile`).
-  * **Build**: (ej: `npm run build`, `./mvnw package`).
+### Eje 4: Servicios en Tiempo Real e Integraciones Externas
+* Localizar servicios de WebSocket, Webhooks, SSE o colas de mensajería (RabbitMQ, Kafka, Redis).
+* Mapear clientes HTTP o SDKs que se comuniquen con APIs de terceros (pasarelas de pago, Google Gemini, OpenAI, Twilio, etc.).
 
-### 1.5 Arquitectura Física Existente
-* Mapear el árbol de carpetas para identificar el patrón de diseño actual:
-  * *Clean Architecture / Hexagonal* (dominio, aplicación, infraestructura).
-  * *MVC Tradicional* (controllers, services, models/entities).
-  * *Feature-First / Vertical Slice* (carpetas por módulo funcional).
-  * *Fullstack Monorepo* (carpetas separadas `client`/`server` o `frontend`/`backend`).
+### Eje 5: Frontend, Rutas de Usuario y Consumo de APIs
+* Identificar páginas, vistas o rutas del cliente (Next.js App/Pages router, React Router, Flutter screens, Vue, etc.).
+* Inspeccionar servicios de cliente o adaptadores HTTP (Axios, Fetch, Apollo GraphQL) para verificar cómo consumen el backend.
+
+### Eje 6: Testing, Calidad y Tooling Operativo
+* Localizar suites de pruebas existentes (`tests/`, `src/test/`, `__tests__/`).
+* Identificar y probar los comandos reales configurados para: `test`, `lint`, `typecheck` y `build`.
 
 ---
 
-## FASE 2: Generación del Archivo Maestro `AGENTS.md`
+## FASE 2: Calibración de Gobernanza (`AGENTS.md`)
 
-El asistente genera el archivo maestro **`AGENTS.md`** en la raíz del repositorio, adaptado a la realidad descubierta:
-
-### Estructura de `AGENTS.md` para Proyectos Brownfield:
+A partir de la auditoría física de la Fase 1, el asistente genera o actualiza **`AGENTS.md`** en la raíz:
 
 ```markdown
-# AGENTS.md — Reglas Operativas y Gobernanza SDD (Adopción Brownfield)
+# AGENTS.md — Gobernanza y Reglas Operativas SDD (Adopción Brownfield)
 
 ## 1. Identidad y Contexto del Proyecto
 * **Proyecto**: [Nombre del Proyecto detectado]
 * **Modalidad**: Adopción SDD en Código Existente (Brownfield)
 * **Stack Principal**: [Lenguajes, Frameworks y BD detectados]
-* **Arquitectura Base**: [Patrón arquitectónico identificado]
+* **Arquitectura Base**: [Clean Architecture / MVC / Monorepo Modular / etc.]
 
 ## 2. Comandos Operativos Verificados
 El asistente DEBE utilizar estrictamente los comandos reales configurados en este proyecto:
-* **Ejecutar Pruebas**: `[comando real detectado, ej: npm test / ./mvnw test]`
+* **Ejecutar Pruebas**: `[comando real verificado, ej: npm test / ./mvnw test]`
 * **Verificación de Tipos / Compilación**: `[comando real, ej: npx tsc --noEmit / ./mvnw compile]`
 * **Linter**: `[comando real, ej: npm run lint]`
 * **Build de Producción**: `[comando real, ej: npm run build]`
 
 ## 3. Reglas Innegociables para Proyectos Existentes
-1. **Regla de No Regresión**: Cualquier nueva feature o corrección debe garantizar que la suite de pruebas existente continúe pasando al 100%.
-2. **Prohibición de Refactorización Silenciosa**: No se deben modificar módulos marcados como `SEALED` a menos que exista una tarea formal en `tasks.md`.
-3. **Respeto a las Convenciones Vigentes**: Todo nuevo código debe adherirse a los estilos de nombres, patrones de carpetas y prácticas ya presentes en el proyecto.
-4. **Ciclo de Vida Documental**:
+1. **Invariante de No Regresión**: Cualquier nueva feature o corrección debe garantizar que la suite de pruebas existente continúe pasando al 100%.
+2. **Prohibición de Refactorización Silenciosa**: Ningún agente modificará código existente a menos que exista una tarea formal aprobada en `tasks.md`.
+3. **Respeto a Convenciones Vigentes**: Todo nuevo código debe respetar las convenciones de nombres, estructura de carpetas y patrones ya observados.
+4. **Flujo de Trabajo Operativo**:
    * Nuevas Features: `/sdd-spec-high` ➔ `/sdd-planning` ➔ `/sdd-task` ➔ `/sdd-execution`
-   * Refactors y Corrección de Bugs en Código Existente: `/sdd-spec-anchored`
+   * Refactors y Bugs en Código Legado: `/sdd-spec-anchored`
    * Despliegue y Ops: `/doc-deploy`
 ```
 
 ---
 
-## FASE 3: Redacción de la Constitución De Facto (`docs/constitution.md`)
+## FASE 3: Constitución De Facto (`docs/constitution.md`)
 
-El asistente crea el documento supremo **`docs/constitution.md`**. En lugar de formular preguntas sobre preferencias futuras, este documento extrae y consolida las reglas que ya gobiernan el sistema:
+El asistente genera el documento supremo **`docs/constitution.md`** reflejando la realidad consolidada del proyecto:
 
-### Contenido obligatorio de `docs/constitution.md`:
-1. **Misión y Visión del Sistema**: Qué problema resuelve la plataforma según las rutas, controladores y modelos ya construidos.
-2. **Actores y Roles Detectados**: Roles identificados en middlewares de autenticación/autorización, tablas de base de datos o interfaces de usuario.
-3. **Stack y Dependencias Aprobadas**: Catálogo de tecnologías activas en el repositorio. Queda prohibido añadir librerías redundantes sin justificación técnica.
-4. **Invariantes Técnicas y de Entorno**:
-   * Puertos por defecto y variables de entorno críticas.
-   * Reglas de conectividad y dependencias externas (pasarelas de pago, APIs externas, servicios de correo).
-5. **Principios de Calidad y Concurrencia**:
-   * Manejo de transacciones en base de datos.
-   * Tratamiento de errores y respuestas HTTP estándar.
-6. **Límites Operativos y Deuda Técnica Conocida**:
-   * Aspectos identificados durante la auditoría que requieren atención posterior.
+1. **Misión y Dominio de Negocio**: Propósito de la plataforma deducido de las pantallas, controladores y modelos ya construidos.
+2. **Actores y Roles Detectados**: Roles identificados en middlewares, tokens o tablas (ej. `ADMIN`, `USER`, `MODERATOR`).
+3. **Stack y Dependencias Aprobadas**: Catálogo exhaustivo de librerías vigentes en el proyecto. Prohibido agregar dependencias redundantes.
+4. **Invariantes Técnicas y de Entorno**: Puertos asignados, variables de entorno críticas y restricciones de red/CORS.
+5. **Principios de Arquitectura y Calidad**: Patrones transversales observados (inyección de dependencias, tratamiento unificado de errores).
 
 ---
 
-## FASE 4: Inventario de Dominios y Línea Base (`docs/specs/00-baseline/`)
+## FASE 4: Suite Documental de Línea Base (`docs/specs/00-baseline/`)
 
-El asistente crea la carpeta `docs/specs/00-baseline/` y genera el archivo **`inventory.md`**, el cual establece el estado de madurez de cada parte del sistema:
+Para garantizar un historial explícito y navegable del estado exacto en que se encuentra el proyecto, el asistente crea el directorio `docs/specs/00-baseline/` y genera la siguiente suite modular de 6 documentos:
 
-### Estructura de `docs/specs/00-baseline/inventory.md`:
-
-```markdown
-# Línea Base del Sistema e Inventario de Módulos
-
-## 1. Matriz de Estado de Módulos
-
-| Módulo / Dominio | Directorio Físico | Estado | Cobertura de Tests | Descripción / Contrato Principal | Próxima Acción SDD |
-| :--- | :--- | :--- | :--- | :--- | :--- |
-| [Ej: Auth] | `src/auth/` o similar | SEALED | [Alta / Media / Nula] | JWT, Login, Registro, Refresh Token | Mantenimiento pasivo |
-| [Ej: Catálogo] | `src/products/` | STABLE | [Alta / Media / Nula] | CRUD de productos y categorías | Respetar contratos |
-| [Ej: Facturación] | `src/billing/` | IN_PROGRESS | [Nula] | Lógica a medio terminar, sin tests | Formalizar con spec |
-| [Ej: Reportes] | N/A | PENDING | N/A | No implementado en código | Diseñar con /sdd-spec-high |
-
-### Definición de Estados:
-* **`SEALED`**: Módulo en producción o completamente funcional. Se considera una "caja negra" con contratos fijos. Solo se interviene mediante `/sdd-spec-anchored`.
-* **`STABLE`**: Módulo con funcionalidad básica operativa pero sujeto a posibles extensiones menores.
-* **`IN_PROGRESS`**: Código detectado pero incompleto, con stubs, mocks o falta de integración.
-* **`PENDING`**: Módulo que el equipo planea construir pero no tiene presencia en el código.
-
----
-
-## 2. Catálogo de Contratos Públicos Existentes
-
-### 2.1 Endpoints de API / Rutas Expuestas
-* Listar los endpoints detectados en controladores/routers con método HTTP y propósito.
-
-### 2.2 Modelos de Persistencia (Entidades Principales)
-* Listar las tablas o colecciones existentes y sus relaciones cardinales observadas.
-
-### 2.3 Eventos / WebSockets / Mensajería (si aplica)
-* Tópicos o canales utilizados por la aplicación.
+```text
+📁 docs/specs/00-baseline/
+├── 📄 00_INDICE_BASELINE.md               <-- Mapa de navegación, matriz de módulos y estado de adopción
+├── 📄 01_ARQUITECTURA_Y_STACK.md          <-- Topología de carpetas, dependencias, puertos y servicios
+├── 📄 02_MODELO_DATOS_Y_PERSISTENCIA.md   <-- Esquema relacional en texto, tablas, colecciones, campos y relaciones
+├── 📄 03_CONTRATOS_API_Y_SERVICIOS.md     <-- Endpoints con método HTTP, ruta, función y WebSockets/eventos
+├── 📄 04_FLUJOS_Y_CASOS_USO_ACTUALES.md   <-- Flujos E2E de usuario ya funcionales en la aplicación
+└── 📄 05_DEUDA_TECNICA_Y_RIESGOS.md       <-- Matriz de riesgos por severidad (ALTA, MEDIA, BAJA)
 ```
 
+### Detalle de cada Documento Modular:
+
+#### 1. `00_INDICE_BASELINE.md`:
+* Resumen ejecutivo del proyecto y fecha de la auditoría forense.
+* Tabla de navegación con enlaces relativos a los otros 5 documentos.
+* **Matriz de Estado de Módulos**:
+  * `SEALED`: Módulo funcional y estable. Caja negra que solo se toca con `/sdd-spec-anchored`.
+  * `STABLE`: Módulo operativo pero con margen de extensión menor.
+  * `IN_PROGRESS`: Código a medio terminar, mocks o stubs detectados.
+  * `PENDING`: Módulo conceptual que aún no tiene código de producción.
+
+#### 2. `01_ARQUITECTURA_Y_STACK.md`:
+* Árbol físico de directorios del proyecto con explicación de cada carpeta clave.
+* Lista de versiones de lenguajes, frameworks, ORM y herramientas de build.
+* Topología de infraestructura (servicios en `docker-compose.yml`, bases de datos auxiliares como Redis, etc.).
+* Tabla de variables de entorno requeridas en `.env.example`.
+
+#### 3. `02_MODELO_DATOS_Y_PERSISTENCIA.md`:
+* Esquema relacional estructurado en texto (Entidad -> Campos -> Tipos -> Restricciones).
+* Relaciones cardinales detectadas (1:N, N:M) y claves foráneas (PK/FK).
+* Estado de las migraciones de base de datos (herramienta de migración utilizada y lista de scripts/versiones).
+
+#### 4. `03_CONTRATOS_API_Y_SERVICIOS.md` *(Rigor Intermedio)*:
+* Catálogo de endpoints organizados por controlador/dominio:
+  * Método HTTP y Ruta (ej. `POST /api/v1/auth/login`).
+  * Breve descripción de la funcionalidad de negocio.
+  * Autenticación requerida (Pública / Bearer JWT / Cookie).
+* Catálogo de eventos o sockets en tiempo real (canales, eventos emitidos y escuchados).
+* Integraciones con servicios externos (APIs de terceros, pasarelas, IA).
+
+#### 5. `04_FLUJOS_Y_CASOS_USO_ACTUALES.md`:
+* Mapeo de flujos de negocio completos que la aplicación ya soporta de punta a punta:
+  * Ej: Flujo de Registro e Inicio de Sesión.
+  * Ej: Flujo de Visualización o Creación de Recursos.
+* Puntos de entrada del usuario en el frontend y qué llamadas al backend desencadenan.
+
+#### 6. `05_DEUDA_TECNICA_Y_RIESGOS.md`:
+* **Matriz de Riesgos y Deuda Técnica clasificada por severidad**:
+  * **SEVERIDAD ALTA (Crítica)**: Secretos o credenciales expuestos en código, endpoints desprotegidos, fallos de inyección o transacciones de BD no atómicas.
+  * **SEVERIDAD MEDIA (Funcional)**: Módulos a medio implementar, controladores que devuelven mocks, rutas rotas o contratos desincronizados entre frontend y backend.
+  * **SEVERIDAD BAJA (Mantenimiento)**: Archivos sin cobertura de tests unitarios, warnings de linter, código comentado (*dead code*) o tipos `any` excesivos.
+
 ---
 
-## FASE 5: Hoja de Ruta de Transición Operativa
+## FASE 5: Hoja de Ruta de Transición y Protocolo de Trabajo
 
-El asistente define y explica al usuario el protocolo para continuar el desarrollo a partir de este momento:
+Al culminar la generación de la suite documental, el asistente presenta al usuario la guía de acción inmediata:
 
 ```text
                                    ¿Qué deseas hacer ahora?
@@ -213,57 +216,47 @@ El asistente define y explica al usuario el protocolo para continuar el desarrol
         Flujo SDD puro               Alineación con tests            Docker / Cloud / Ops
 ```
 
-1. **Para implementar nuevas funcionalidades (Módulos `PENDING`)**:
-   * Usar `/sdd-spec-high [nombre de la feature]`
-   * El asistente diseñará la especificación y el plan garantizando no colisionar con la Línea Base.
-2. **Para completar código existente o corregir bugs (Módulos `IN_PROGRESS` o `SEALED`)**:
-   * Usar `/sdd-spec-anchored 00. [descripción de la corrección o feature a culminar]`
-   * Esto creará la spec retrospectiva, el plan de acoplamiento y las tareas guiadas.
+1. **Para desarrollar una funcionalidad nueva (Módulos `PENDING`)**:
+   * Ejecutar: `/sdd-spec-high [nombre de la nueva feature]`
+   * Diseña el QUÉ funcional asegurando total compatibilidad con los contratos catalogados en `03_CONTRATOS_API_Y_SERVICIOS.md`.
+2. **Para resolver ítems de deuda técnica o completar módulos (Módulos `IN_PROGRESS`)**:
+   * Ejecutar: `/sdd-spec-anchored 00. [nombre del ítem de deuda o módulo a terminar]`
+   * Genera la spec retrospectiva, el plan de ajuste y las tareas atómicas con pruebas obligatorias.
 3. **Para ejecutar tareas**:
-   * Usar `/sdd-execution` para validar código y tests con verificación física en consola.
+   * Ejecutar: `/sdd-execution` bajo validación dual con consola real.
 
 ---
 
-# 3. Entrevista de Calibración Rápida (Opcional - Grill-Me Mínimo)
+# 3. Reporte de Cierre de Adopción
 
-Si durante la Fase 1 el asistente detecta ambigüedades críticas que no se pueden inferir del código (ej. módulos duplicados, código muerto o dos configuraciones contradictorias), formulará **máximo 3 preguntas cerradas** al usuario:
-
-```text
-❓ Calibración Brownfield:
-1. Detecté dos módulos de persistencia: [A] y [B]. ¿Cuál es el actualmente activo en producción?
-2. ¿Hay alguna sección de código en [carpeta] que deba ser considerada obsoleta (deprecated)?
-3. ¿Cuál es el comando preferido para ejecutar la suite completa de pruebas?
-```
-
----
-
-# 4. Salida Esperada: Reporte de Adopción
-
-Al finalizar, el asistente DEBE presentar un informe estructurado como este:
+Al finalizar `/sdd-adopt`, la IA debe emitir un resumen estructurado en el chat:
 
 ```text
 ================================================================================
-🎉 ADOPCIÓN SDD COMPLETADA EXITOSAMENTE (LÍNEA BASE CONSOLIDADA)
+🎉 ADOPCIÓN SDD COMPLETADA EXITOSAMENTE (LÍNEA BASE MODULAR CONSOLIDADA)
 ================================================================================
 ✔ Repositorio Auditado: [Nombre o ruta del proyecto]
-✔ Stack Detectado: [Lenguaje/Framework backend, frontend, BD, ORM]
-✔ Test Runner Configurado: [Comando verificado]
-✔ Gobernanza Establecida:
-  ├── AGENTS.md                               (Instrucciones de gobernanza y comandos)
+✔ Análisis Forzado Completado: 6 Ejes de Inspección Física Verificados
+✔ Comandos Operativos Configurados en AGENTS.md:
+  - Test Runner: [Comando verificado]
+  - Linter / Typecheck: [Comando verificado]
+  - Build: [Comando verificado]
+✔ Suite Documental Generada:
+  ├── AGENTS.md
   └── docs/
-      ├── constitution.md                     (Constitución De Facto del proyecto)
+      ├── constitution.md
       └── specs/00-baseline/
-          └── inventory.md                    (Inventario de módulos y contratos)
-
+          ├── 00_INDICE_BASELINE.md
+          ├── 01_ARQUITECTURA_Y_STACK.md
+          ├── 02_MODELO_DATOS_Y_PERSISTENCIA.md
+          ├── 03_CONTRATOS_API_Y_SERVICIOS.md
+          ├── 04_FLUJOS_Y_CASOS_USO_ACTUALES.md
+          └── 05_DEUDA_TECNICA_Y_RIESGOS.md
 --------------------------------------------------------------------------------
-📊 Resumen de Módulos Catalogados:
-- [N] Módulos SEALED (Estables)
-- [N] Módulos IN_PROGRESS (Requieren alineación)
-- [N] Módulos PENDING (Futuros desarrollos)
+📊 Estado Inicial del Sistema:
+- Módulos Catalogados: [N] SEALED | [N] STABLE | [N] IN_PROGRESS | [N] PENDING
+- Deuda Técnica Detectada: [N] Alta | [N] Media | [N] Baja
 --------------------------------------------------------------------------------
-🚀 Próximos pasos recomendados:
-- Para nueva funcionalidad: `/sdd-spec-high [descripción]`
-- Para completar o arreglar un módulo legado: `/sdd-spec-anchored 00. [detalle]`
-- Para desplegar: `/doc-deploy`
+🚀 El proyecto cuenta con un historial explícito y está listo para operar bajo SDD.
 ================================================================================
 ```

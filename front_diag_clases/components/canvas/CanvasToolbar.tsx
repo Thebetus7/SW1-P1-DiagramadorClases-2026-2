@@ -10,6 +10,7 @@ interface CanvasToolbarProps {
   onOpenPreview: () => void;
   onOpenSpringBootExport: () => void;
   onOpenFlutterExport: () => void;
+  onOpenMobileLink: () => void;
   isWsConnected: boolean;
 }
 
@@ -20,6 +21,7 @@ export function CanvasToolbar({
   onOpenPreview,
   onOpenSpringBootExport,
   onOpenFlutterExport,
+  onOpenMobileLink,
   isWsConnected,
 }: CanvasToolbarProps) {
   return (
@@ -88,6 +90,18 @@ export function CanvasToolbar({
       >
         <Smartphone className="w-3.5 h-3.5 text-sky-600" />
         Exportar Flutter (ZIP)
+      </button>
+
+      <div className="h-4 w-px bg-slate-200" />
+
+      {/* Botón Vincular Visor Móvil (Companion App) */}
+      <button
+        onClick={onOpenMobileLink}
+        title="Vincular aplicación móvil Flutter mediante código QR o enlace en tiempo real"
+        className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-bold text-indigo-700 bg-indigo-50 hover:bg-indigo-100 rounded transition-all border border-indigo-200 shadow-xs hover:scale-[1.02] active:scale-[0.98]"
+      >
+        <Smartphone className="w-3.5 h-3.5 text-indigo-600" />
+        Vincular Móvil
       </button>
 
       <div className="h-4 w-px bg-slate-200" />

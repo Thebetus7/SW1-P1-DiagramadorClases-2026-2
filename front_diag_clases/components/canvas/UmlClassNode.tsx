@@ -21,8 +21,12 @@ function UmlClassNodeComponent({ id, data, selected }: NodeProps) {
 
   return (
     <div
-      className={`bg-white rounded-md border min-w-[210px] max-w-[300px] shadow-sm text-xs font-mono transition-shadow select-none ${
-        selected ? "border-slate-800 ring-2 ring-slate-800/20 shadow-md" : "border-slate-300"
+      className={`bg-white rounded-md border min-w-[210px] max-w-[300px] shadow-sm text-xs font-mono transition-all duration-300 select-none ${
+        classData.isHighlighted
+          ? "ring-4 ring-indigo-500/80 shadow-2xl shadow-indigo-500/40 animate-pulse border-indigo-600 scale-[1.02]"
+          : selected
+          ? "border-slate-800 ring-2 ring-slate-800/20 shadow-md"
+          : "border-slate-300"
       }`}
     >
       {/* Handles de conexión en los 4 bordes */}

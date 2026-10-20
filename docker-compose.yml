@@ -21,6 +21,20 @@ services:
       retries: 5
 
   # ==========================================================
+  # 1.1 Base de Datos Documental: MongoDB 7
+  # ==========================================================
+  mongodb:
+    image: mongo:7-jammy
+    container_name: diag_mongodb
+    restart: always
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo_data:/data/db
+    networks:
+      - diag_network
+
+  # ==========================================================
   # 2. Backend: Spring Boot + Java 17 + STOMP WebSockets
   # ==========================================================
   backend:
@@ -32,10 +46,13 @@ services:
     depends_on:
       postgres_db:
         condition: service_healthy
+      mongodb:
+        condition: service_started
     environment:
       SPRING_DATASOURCE_URL: jdbc:postgresql://postgres_db:5432/sw1_diag_clases_2026_2
       SPRING_DATASOURCE_USERNAME: postgres
       SPRING_DATASOURCE_PASSWORD: ${DB_PASSWORD:-password123}
+      SPRING_DATA_MONGODB_URI: ${SPRING_DATA_MONGODB_URI:-mongodb://mongodb:27017/sw1_diag_chat}
       SPRING_JPA_HIBERNATE_DDL_AUTO: update
       SPRING_JPA_SHOW_SQL: "false"
     networks:
@@ -84,4 +101,6 @@ networks:
 # Volumen persistente para que la base de datos no pierda información
 volumes:
   postgres_data:
+    driver: local
+  mongo_data:
     driver: local

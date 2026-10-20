@@ -6,7 +6,7 @@ import { useViewport } from "@xyflow/react";
 export interface RemoteCursor {
   userId: number;
   userName: string;
-  userRole: "CREADOR" | "COLABORADOR";
+  userRole: "CREADOR" | "COLABORADOR" | "SISTEMA";
   x: number;
   y: number;
   lastUpdated: number;

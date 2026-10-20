@@ -567,7 +567,7 @@ Tu tarea es analizar el estado actual del diagrama UML en formato JSON y modific
 
 ### FORMATO JSON REQUERIDO DE RESPUESTA:
 {
-  "explanation": "Breve resumen en español de lo que se añadió o modificó.",
+  "explanation": "Resumen técnico directo en español de las entidades y aristas modificadas o añadidas, formateado en Markdown (sin saludos ni modestias, comenzando directamente con el cambio).",
   "nodes": [ ...todos los nodos actualizados... ],
   "edges": [ ...todas las aristas actualizadas... ]
 }
@@ -822,6 +822,230 @@ Tu misión es analizar exhaustivamente la imagen proporcionada (que puede ser un
     }
   }
 
-  throw lastError || new Error("No se pudo procesar la imagen con Gemini Vision AI.");
+  throw lastError || new Error("IA saturada, vuelve a escribir");
+}
+
+// =========================================================================
+// MÓDULO COPILOT IA: MODO DUAL, SUGERENCIAS PROACTIVAS Y RESILIENCIA 429
+// =========================================================================
+
+import { ChatProposalPayload, CopilotMode } from "@/types";
+
+/**
+ * Clasifica la intención del usuario entre consulta conceptual ("CHAT")
+ * y orden de mutación estructural de diagrama ("EDITOR")
+ */
+export function classifyPromptIntent(userText: string): CopilotMode {
+  const text = (userText || "").toLowerCase().trim();
+
+  // Patrones directos de mutación / edición
+  const editPatterns = [
+    /\b(crea|crear|agrega|agregar|añade|añadir|elimina|eliminar|borra|borrar)\b/,
+    /\b(modifica|modificar|cambia|cambiar|conecta|conectar|asocia|asociar)\b/,
+    /\b(nueva clase|nuevo atributo|nuevo metodo|nueva relacion)\b/,
+    /\b(agrega atributo|añade atributo|ponle atributo|creale clase)\b/,
+  ];
+
+  for (const pattern of editPatterns) {
+    if (pattern.test(text)) {
+      return "EDITOR";
+    }
+  }
+
+  return "CHAT";
+}
+
+export interface ProactiveSuggestionResult {
+  content: string;
+  taggedUserName: string;
+  proposal?: ChatProposalPayload;
+}
+
+/**
+ * Genera una sugerencia proactiva breve ante cambios en el lienzo,
+ * etiquetando obligatoriamente al autor (@usuario).
+ */
+export async function generateProactiveSuggestion(
+  canvasNodes: Node[],
+  canvasEdges: Edge[],
+  projectName: string,
+  authorName: string,
+  customApiKey?: string
+): Promise<ProactiveSuggestionResult> {
+  const apiKey = customApiKey || DEFAULT_GEMINI_API_KEY;
+  if (!apiKey) {
+    return {
+      taggedUserName: authorName,
+      content: `@${authorName}: He registrado tu cambio en el lienzo. Puedes solicitarme sugerencias de normalización o nuevas clases asociadas cuando gustes.`,
+    };
+  }
+
+  const prompt = `
+Analiza este diagrama de clases UML '${projectName}' tras una edición realizada por el colaborador '${authorName}'.
+Genera una sugerencia proactiva MUY CONCISA (máximo 2 líneas de texto) empezando obligatoriamente con '@${authorName}:'.
+Indica una recomendación útil de normalización, un atributo faltante o una relación recomendada (ej: composición, clase de asociación).
+Si la recomendación implica modificar el diagrama, describe en 'proposal.summary' la instrucción técnica exacta y directa para aplicar el cambio (ej: 'Renombrar NuevaClase_2 a Categoría y agregar stock: int a Producto').
+
+FORMATO JSON REQUERIDO:
+{
+  "taggedUserName": "${authorName}",
+  "content": "@${authorName}: [Tu sugerencia concisa]",
+  "proposal": {
+    "summary": "Instrucción técnica directa de la edición propuesta (ej: Renombrar X a Y, agregar atributo Z)",
+    "nodesDelta": [],
+    "edgesDelta": []
+  }
+}
+Diagrama actual:
+${JSON.stringify({
+  nodes: canvasNodes.map((n) => ({ id: n.id, name: n.data?.name, attributes: n.data?.attributes })),
+  edges: canvasEdges.map((e) => ({ source: e.source, target: e.target, type: e.data?.relationType })),
+})}
+`;
+
+  for (const model of GEMINI_MODELS) {
+    try {
+      const response = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            contents: [{ role: "user", parts: [{ text: prompt }] }],
+            generationConfig: { responseMimeType: "application/json", temperature: 0.3 },
+          }),
+        }
+      );
+
+      if (!response.ok) {
+        if (response.status === 429) {
+          throw new Error("IA saturada, vuelve a escribir");
+        }
+        continue;
+      }
+
+      const data = await response.json();
+      const rawText = data.candidates?.[0]?.content?.parts?.[0]?.text || "{}";
+      const parsed = JSON.parse(rawText);
+
+      return {
+        taggedUserName: authorName,
+        content: parsed.content || `@${authorName}: Sugiero revisar las multiplicidades y atributos de las clases recién editadas.`,
+        proposal: parsed.proposal?.summary ? parsed.proposal : undefined,
+      };
+    } catch (err: any) {
+      if (err.message?.includes("IA saturada")) throw err;
+    }
+  }
+
+  // Fallback seguro ante agotamiento de modelos
+  return {
+    taggedUserName: authorName,
+    content: `@${authorName}: Cambio registrado en el lienzo. ¿Deseas normalizar atributos o agregar operaciones CRUD para esta entidad?`,
+  };
+}
+
+export interface CopilotChatResponse {
+  replyText: string;
+  proposal?: ChatProposalPayload;
+  newNodes?: Node[];
+  newEdges?: Edge[];
+}
+
+/**
+ * Procesa un mensaje conversacional o directiva de edición con el Copilot IA
+ */
+export async function chatWithCopilot(
+  userText: string,
+  mode: CopilotMode,
+  canvasNodes: Node[],
+  canvasEdges: Edge[],
+  projectName: string,
+  customApiKey?: string
+): Promise<CopilotChatResponse> {
+  const apiKey = customApiKey || DEFAULT_GEMINI_API_KEY;
+  if (!apiKey) {
+    return {
+      replyText: "No se encontró configurada la clave NEXT_PUBLIC_GEMINI_API_KEY. Por favor configúrala para habilitar el Copilot en vivo.",
+    };
+  }
+
+  // Si está en modo EDITOR, procesar mutación de diagrama
+  if (mode === "EDITOR") {
+    try {
+      const result = await processDiagramWithGemini(userText, canvasNodes, canvasEdges, projectName, apiKey);
+      return {
+        replyText: result.explanation,
+        proposal: {
+          summary: result.explanation,
+          nodesDelta: result.nodes,
+          edgesDelta: result.edges,
+          status: "PENDING",
+        },
+        newNodes: result.nodes,
+        newEdges: result.edges,
+      };
+    } catch (err: any) {
+      if (err.message?.includes("429") || err.message?.includes("quota") || err.message?.includes("saturada")) {
+        throw new Error("IA saturada, vuelve a escribir");
+      }
+      throw err;
+    }
+  }
+
+  // Si está en modo CHAT, responder de forma conversacional explicativa
+  const systemPrompt = `
+Eres Copilot UML, un asistente experto en ingeniería de software, arquitectura orientada a objetos, normalización y patrones de diseño UML 2.5 para el proyecto '${projectName}'.
+DIRECTIVA ESTRICTA DE COMUNICACIÓN:
+- Sé DIRECTO, conciso y técnico.
+- Cero fórmulas de cortesía, presentaciones vacías o saludos ('¡Hola!', 'Soy tu asistente', 'Como IA', 'Espero te sirva').
+- Inicia de inmediato con la explicación técnica, sugerencia arquitectónica o resumen de impacto.
+- Responde de forma clara, profesional y formateada en Markdown estructurado (listas, negritas, bloques de código si es necesario).
+- NO devuelvas JSON de nodos ni órdenes directas de edición de lienzo a menos que te lo pidan explícitamente.
+`;
+
+  const userPrompt = `
+Contexto del diagrama actual '${projectName}':
+${JSON.stringify({
+  nodes: canvasNodes.map((n) => ({ name: n.data?.name, stereotype: n.data?.stereotype, attributes: n.data?.attributes, methods: n.data?.methods })),
+  edges: canvasEdges.map((e) => ({ source: e.source, target: e.target, type: e.data?.relationType })),
+})}
+
+Consulta del usuario:
+"${userText}"
+`;
+
+  for (const model of GEMINI_MODELS) {
+    try {
+      const response = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            contents: [
+              { role: "user", parts: [{ text: `${systemPrompt}\n\n${userPrompt}` }] }
+            ],
+            generationConfig: { temperature: 0.4 },
+          }),
+        }
+      );
+
+      if (!response.ok) {
+        if (response.status === 429) {
+          throw new Error("IA saturada, vuelve a escribir");
+        }
+        continue;
+      }
+
+      const data = await response.json();
+      const reply = data.candidates?.[0]?.content?.parts?.[0]?.text || "No se pudo generar respuesta.";
+      return { replyText: reply };
+    } catch (err: any) {
+      if (err.message?.includes("IA saturada")) throw err;
+    }
+  }
+
+  throw new Error("IA saturada, vuelve a escribir");
 }
 
