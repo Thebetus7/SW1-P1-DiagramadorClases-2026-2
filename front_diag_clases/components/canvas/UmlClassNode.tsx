@@ -29,57 +29,57 @@ function UmlClassNodeComponent({ id, data, selected }: NodeProps) {
           : "border-slate-300"
       }`}
     >
-      {/* Handles de conexión en los 4 bordes */}
+      {/* Anclajes de conexión adaptativos perimetrales (estilo Enterprise Architect) */}
       <Handle
         type="target"
         position={Position.Top}
         id="top-target"
-        className="w-2.5 h-2.5 bg-slate-600 border-2 border-white rounded-full hover:bg-slate-900 transition-colors"
+        className="!w-2 !h-2 !bg-indigo-500 !border-2 !border-white !rounded-full opacity-0 group-hover:opacity-60 hover:!opacity-100 transition-opacity"
       />
       <Handle
         type="source"
         position={Position.Top}
         id="top-source"
-        className="w-2.5 h-2.5 bg-slate-600 border-2 border-white rounded-full opacity-0 hover:opacity-100"
+        className="!w-2 !h-2 !bg-indigo-500 !border-2 !border-white !rounded-full opacity-0 group-hover:opacity-60 hover:!opacity-100 transition-opacity"
       />
 
       <Handle
         type="target"
         position={Position.Bottom}
         id="bottom-target"
-        className="w-2.5 h-2.5 bg-slate-600 border-2 border-white rounded-full hover:bg-slate-900 transition-colors"
+        className="!w-2 !h-2 !bg-indigo-500 !border-2 !border-white !rounded-full opacity-0 group-hover:opacity-60 hover:!opacity-100 transition-opacity"
       />
       <Handle
         type="source"
         position={Position.Bottom}
         id="bottom-source"
-        className="w-2.5 h-2.5 bg-slate-600 border-2 border-white rounded-full opacity-0 hover:opacity-100"
+        className="!w-2 !h-2 !bg-indigo-500 !border-2 !border-white !rounded-full opacity-0 group-hover:opacity-60 hover:!opacity-100 transition-opacity"
       />
 
       <Handle
         type="target"
         position={Position.Left}
         id="left-target"
-        className="w-2.5 h-2.5 bg-slate-600 border-2 border-white rounded-full hover:bg-slate-900 transition-colors"
+        className="!w-2 !h-2 !bg-indigo-500 !border-2 !border-white !rounded-full opacity-0 group-hover:opacity-60 hover:!opacity-100 transition-opacity"
       />
       <Handle
         type="source"
         position={Position.Left}
         id="left-source"
-        className="w-2.5 h-2.5 bg-slate-600 border-2 border-white rounded-full opacity-0 hover:opacity-100"
+        className="!w-2 !h-2 !bg-indigo-500 !border-2 !border-white !rounded-full opacity-0 group-hover:opacity-60 hover:!opacity-100 transition-opacity"
       />
 
       <Handle
         type="target"
         position={Position.Right}
         id="right-target"
-        className="w-2.5 h-2.5 bg-slate-600 border-2 border-white rounded-full hover:bg-slate-900 transition-colors"
+        className="!w-2 !h-2 !bg-indigo-500 !border-2 !border-white !rounded-full opacity-0 group-hover:opacity-60 hover:!opacity-100 transition-opacity"
       />
       <Handle
         type="source"
         position={Position.Right}
         id="right-source"
-        className="w-2.5 h-2.5 bg-slate-600 border-2 border-white rounded-full opacity-0 hover:opacity-100"
+        className="!w-2 !h-2 !bg-indigo-500 !border-2 !border-white !rounded-full opacity-0 group-hover:opacity-60 hover:!opacity-100 transition-opacity"
       />
 
       {/* Cabecera / Nombre de la Clase */}

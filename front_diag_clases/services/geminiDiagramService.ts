@@ -1,5 +1,5 @@
 import { Edge, Node } from "@xyflow/react";
-import { UmlAttribute, UmlClassData, UmlEdgeData, UmlMethod, UmlRelationType, UmlVisibility } from "@/types";
+import { UmlAttribute, UmlClassData, UmlEdgeData, UmlMethod, UmlRelationType, UmlVisibility, ChatMessage } from "@/types";
 import { cleanSpecialCharacters } from "./xmiEncodingHelper";
 
 export interface AiDiagramResult {
@@ -304,10 +304,23 @@ export function normalizeExtractedDiagram(
   rawResult: any,
   existingNodes: Node[] = []
 ): { nodes: Node[]; edges: Edge[]; explanation: string } {
-  const rawNodes = Array.isArray(rawResult?.nodes) ? rawResult.nodes : [];
-  const rawEdges = Array.isArray(rawResult?.edges) ? rawResult.edges : [];
+  const rawNodes = Array.isArray(rawResult?.nodes)
+    ? rawResult.nodes
+    : Array.isArray(rawResult?.classes)
+    ? rawResult.classes
+    : Array.isArray(rawResult?.classesDelta)
+    ? rawResult.classesDelta
+    : [];
+  const rawEdges = Array.isArray(rawResult?.edges)
+    ? rawResult.edges
+    : Array.isArray(rawResult?.relationships)
+    ? rawResult.relationships
+    : Array.isArray(rawResult?.relations)
+    ? rawResult.relations
+    : [];
   const explanation =
     rawResult?.explanation ||
+    rawResult?.summary ||
     "Diagrama UML 2.5 procesado y reconocido correctamente.";
 
   const now = Date.now();
@@ -484,7 +497,8 @@ export async function processDiagramWithGemini(
   currentNodes: Node[],
   currentEdges: Edge[],
   diagramName: string = "diagrama",
-  apiKey: string = DEFAULT_GEMINI_API_KEY
+  apiKey: string = DEFAULT_GEMINI_API_KEY,
+  chatHistory?: ChatMessage[]
 ): Promise<AiDiagramResult> {
   if (!apiKey) {
     throw new Error("No se ha configurado la API Key de Gemini.");
@@ -567,16 +581,30 @@ Tu tarea es analizar el estado actual del diagrama UML en formato JSON y modific
 
 ### FORMATO JSON REQUERIDO DE RESPUESTA:
 {
-  "explanation": "Resumen técnico directo en español de las entidades y aristas modificadas o añadidas, formateado en Markdown (sin saludos ni modestias, comenzando directamente con el cambio).",
+  "explanation": "Propuesta técnica directa en español redactada OBLIGATORIAMENTE en tiempo futuro indicando con precisión qué vas a hacer antes de que se confirme (por ejemplo: 'Voy a agregar la clase Factura con atributos id y fecha, y estableceré la relación con Pedido...'). NUNCA uses tiempo pasado ni digas 'Se agregaron' o 'He agregado'.",
   "nodes": [ ...todos los nodos actualizados... ],
   "edges": [ ...todas las aristas actualizadas... ]
 }
 `;
 
+  const historyContext =
+    chatHistory && chatHistory.length > 0
+      ? `\nMemoria conversacional previa (últimos ${Math.min(chatHistory.length, 8)} mensajes):\n` +
+        chatHistory
+          .slice(-8)
+          .map((m) => {
+            const role = m.senderType === "USER" ? `@${m.userName || "Usuario"}` : "Copilot IA";
+            const text = m.proposal?.summary || m.content;
+            return `- ${role}: ${text}`;
+          })
+          .join("\n") +
+        "\n"
+      : "";
+
   const userContent = `
 Estado actual del diagrama UML:
 ${JSON.stringify(currentDiagramState, null, 2)}
-
+${historyContext}
 Instrucción del usuario:
 "${prompt}"
 
@@ -587,6 +615,8 @@ Genera el JSON resultante con la estructura solicitada.`;
   for (const model of GEMINI_MODELS) {
     for (let attempt = 1; attempt <= 3; attempt++) {
       try {
+        console.log(`🌐 [Gemini API - Modo Editor] Consultando '${model}' (intento ${attempt}/3)...`);
+        const editStart = performance.now();
         const response = await fetch(
           `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`,
           {
@@ -609,18 +639,21 @@ Genera el JSON resultante con la estructura solicitada.`;
           }
         );
 
+        const editDuration = ((performance.now() - editStart) / 1000).toFixed(2);
+
         if (!response.ok) {
           const errorText = await response.text();
           if ((response.status === 503 || response.status === 429) && attempt < 3) {
-            console.warn(`Aviso: Modelo ${model} respondió ${response.status} (intento ${attempt}/3). Reintentando en ${attempt * 800}ms...`);
+            console.warn(`⚠️ [Gemini API] '${model}' respondió ${response.status} en ${editDuration}s. Reintentando en ${attempt * 800}ms...`);
             await sleep(attempt * 800);
             continue;
           }
-          console.warn(`Aviso: Modelo ${model} respondió ${response.status}, probando siguiente modelo...`, errorText);
+          console.warn(`⚠️ [Gemini API] '${model}' respondió ${response.status} en ${editDuration}s, probando modelo alternativo...`, errorText);
           lastError = new Error(`Error (${model}): ${response.statusText} - ${errorText}`);
           break;
         }
 
+        console.log(`✨ [Gemini API - Modo Editor] Modelo '${model}' generó estructura JSON en ${editDuration}s`);
         const responseData = await response.json();
         const rawText =
           responseData.candidates?.[0]?.content?.parts?.[0]?.text || "{}";
@@ -961,7 +994,8 @@ export async function chatWithCopilot(
   canvasNodes: Node[],
   canvasEdges: Edge[],
   projectName: string,
-  customApiKey?: string
+  customApiKey?: string,
+  chatHistory?: ChatMessage[]
 ): Promise<CopilotChatResponse> {
   const apiKey = customApiKey || DEFAULT_GEMINI_API_KEY;
   if (!apiKey) {
@@ -970,10 +1004,10 @@ export async function chatWithCopilot(
     };
   }
 
-  // Si está en modo EDITOR, procesar mutación de diagrama
+  // Si está en modo EDITOR, procesar mutación de diagrama con tiempo futuro y contexto
   if (mode === "EDITOR") {
     try {
-      const result = await processDiagramWithGemini(userText, canvasNodes, canvasEdges, projectName, apiKey);
+      const result = await processDiagramWithGemini(userText, canvasNodes, canvasEdges, projectName, apiKey, chatHistory);
       return {
         replyText: result.explanation,
         proposal: {
@@ -993,7 +1027,7 @@ export async function chatWithCopilot(
     }
   }
 
-  // Si está en modo CHAT, responder de forma conversacional explicativa
+  // Si está en modo CHAT, responder de forma conversacional explicativa con memoria de 8 turnos
   const systemPrompt = `
 Eres Copilot UML, un asistente experto en ingeniería de software, arquitectura orientada a objetos, normalización y patrones de diseño UML 2.5 para el proyecto '${projectName}'.
 DIRECTIVA ESTRICTA DE COMUNICACIÓN:
@@ -1004,19 +1038,31 @@ DIRECTIVA ESTRICTA DE COMUNICACIÓN:
 - NO devuelvas JSON de nodos ni órdenes directas de edición de lienzo a menos que te lo pidan explícitamente.
 `;
 
+  const historyContext =
+    chatHistory && chatHistory.length > 0
+      ? `\nMemoria de mensajes previos (últimos ${Math.min(chatHistory.length, 8)}):\n` +
+        chatHistory
+          .slice(-8)
+          .map((m) => `${m.senderType === "USER" ? `@${m.userName || "Usuario"}` : "Copilot IA"}: ${m.proposal?.summary || m.content}`)
+          .join("\n") +
+        "\n"
+      : "";
+
   const userPrompt = `
 Contexto del diagrama actual '${projectName}':
 ${JSON.stringify({
   nodes: canvasNodes.map((n) => ({ name: n.data?.name, stereotype: n.data?.stereotype, attributes: n.data?.attributes, methods: n.data?.methods })),
   edges: canvasEdges.map((e) => ({ source: e.source, target: e.target, type: e.data?.relationType })),
 })}
-
+${historyContext}
 Consulta del usuario:
 "${userText}"
 `;
 
   for (const model of GEMINI_MODELS) {
     try {
+      console.log(`🌐 [Gemini API] Enviando solicitud a modelo '${model}'...`);
+      const apiStart = performance.now();
       const response = await fetch(
         `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`,
         {
@@ -1031,13 +1077,17 @@ Consulta del usuario:
         }
       );
 
+      const apiDuration = ((performance.now() - apiStart) / 1000).toFixed(2);
+
       if (!response.ok) {
+        console.warn(`⚠️ [Gemini API] Modelo '${model}' retornó status ${response.status} en ${apiDuration}s.`);
         if (response.status === 429) {
           throw new Error("IA saturada, vuelve a escribir");
         }
         continue;
       }
 
+      console.log(`✨ [Gemini API] Respuesta HTTP 200 de '${model}' en ${apiDuration}s`);
       const data = await response.json();
       const reply = data.candidates?.[0]?.content?.parts?.[0]?.text || "No se pudo generar respuesta.";
       return { replyText: reply };

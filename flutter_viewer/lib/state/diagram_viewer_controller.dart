@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import '../models/diagram_model.dart';
+import '../models/linked_diagram.dart';
 import '../services/diagram_api_service.dart';
 import '../services/local_storage_service.dart';
 import '../services/stomp_socket_service.dart';
@@ -124,9 +125,16 @@ class DiagramViewerController extends ChangeNotifier {
       _diagramData = DiagramCanvasData.fromJson(lienzoJson, name);
       _connectionState = ViewerConnectionState.onlineSynced;
 
-      // 2. Guardar en almacenamiento local persistente
+      // 2. Guardar en almacenamiento local persistente (multi-lienzo)
       await _storageService.saveDiagramJson(diagramId, name, lienzoStr);
-      await _storageService.saveLastSession(diagramId, hostUrl, name);
+      await _storageService.saveLinkedDiagram(LinkedDiagram(
+        diagramId: diagramId,
+        name: name,
+        hostUrl: hostUrl,
+        wsEndpoint: '/ws',
+        linkedAt: DateTime.now(),
+        lastAccessedAt: DateTime.now(),
+      ));
 
       // 3. Conectar STOMP WebSockets
       _initStompConnection(diagramId, hostUrl);
@@ -223,14 +231,19 @@ class DiagramViewerController extends ChangeNotifier {
   }
 
   /// Desvincula la sesión móvil voluntariamente, cierra sockets y limpia
-  Future<void> disconnectAndUnbind() async {
+  Future<void> disconnectAndUnbind({bool removePermanently = false}) async {
+    final diagramId = _currentDiagramId;
     _stompService.disconnect();
     _toastDismissTimer?.cancel();
     _connectionState = ViewerConnectionState.disconnected;
     _diagramData = null;
     _currentDiagramId = null;
     _recentToastMessage = null;
-    await _storageService.clearSession();
+    if (removePermanently && diagramId != null) {
+      await _storageService.removeLinkedDiagram(diagramId);
+    } else {
+      await _storageService.clearSession();
+    }
     notifyListeners();
   }
 

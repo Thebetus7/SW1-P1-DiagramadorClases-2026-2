@@ -30,5 +30,6 @@ public class ChatMessageDto {
 
     private Boolean isError;
     private String errorMessage;
+    private String aiEngine; // "GEMINI_CLOUD", "WEBLLM_LOCAL"
     private Instant createdAt;
 }

@@ -171,3 +171,30 @@ export interface MobileLinkPayload {
   qrPayload: string;
 }
 
+// ==========================================
+// Extensiones Motor Dual IA (WebLLM Local & Floating Edges)
+// ==========================================
+
+export type AiProvider = "GEMINI_CLOUD" | "WEBLLM_LOCAL";
+export type LocalModelChoice = "Llama-3.2-3B-Instruct-q4f16_1-MLC" | "Llama-3.2-1B-Instruct-q4f16_1-MLC";
+export type LocalModelStatus = "NOT_DOWNLOADED" | "DOWNLOADING" | "READY" | "ERROR";
+
+export interface AiEngineConfig {
+  provider: AiProvider;
+  localModelId: LocalModelChoice;
+  status: LocalModelStatus;
+  progressPercent: number;
+  vramUsedMb?: number;
+  webGpuSupported: boolean;
+  errorMessage?: string;
+}
+
+export interface FloatingEdgeParams {
+  sourceX: number;
+  sourceY: number;
+  targetX: number;
+  targetY: number;
+  sourcePosition: string;
+  targetPosition: string;
+}
+

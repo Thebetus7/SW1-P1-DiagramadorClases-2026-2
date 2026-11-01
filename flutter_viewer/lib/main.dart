@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
 import 'screens/link_entry_screen.dart';
+import 'services/fcm_notification_service.dart';
 import 'state/diagram_viewer_controller.dart';
 
-void main() {
+void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  await FcmNotificationService().initialize();
   runApp(const DiagramCompanionApp());
 }
 

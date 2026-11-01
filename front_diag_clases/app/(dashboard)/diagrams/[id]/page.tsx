@@ -24,6 +24,7 @@ import { AlertCircle, X } from "lucide-react";
 import { UmlClassNode } from "@/components/canvas/UmlClassNode";
 import { UmlNoteNode } from "@/components/canvas/UmlNoteNode";
 import { UmlEdge } from "@/components/canvas/UmlEdge";
+import { UmlFloatingEdge } from "@/components/canvas/UmlFloatingEdge";
 import { UmlAssociationClassEdge } from "@/components/canvas/UmlAssociationClassEdge";
 import { UmlEdgeMarkers } from "@/components/canvas/UmlEdgeMarkers";
 import { ClassEditModal } from "@/components/canvas/ClassEditModal";
@@ -54,7 +55,8 @@ import {
   processDiagramWithGemini,
   convertImageToDiagramWithGemini,
 } from "@/services/geminiDiagramService";
-import { ChatMessage, ChatProposalPayload, CopilotMode } from "@/types";
+import { chatWithLocalLlm } from "@/services/webLlmDiagramService";
+import { ChatMessage, ChatProposalPayload, CopilotMode, AiEngineConfig } from "@/types";
 import {
   downloadEnterpriseArchitectXmi,
   generateEnterpriseArchitectXmi,
@@ -156,6 +158,15 @@ function DiagramEditorContent() {
   const [aiQuotaError, setAiQuotaError] = useState<string | null>(null);
   const [copilotUnreadCount, setCopilotUnreadCount] = useState(0);
 
+  // Configuración del motor dual de IA (Gemini Cloud vs WebLLM Local)
+  const [aiEngineConfig, setAiEngineConfig] = useState<AiEngineConfig>({
+    provider: "GEMINI_CLOUD",
+    localModelId: "Llama-3.2-3B-Instruct-q4f16_1-MLC",
+    status: "NOT_DOWNLOADED",
+    progressPercent: 0,
+    webGpuSupported: true,
+  });
+
   // Guardas de concurrencia y deduplicación para Copilot IA
   const isCopilotProcessingRef = useRef(false);
   const isProactiveRunningRef = useRef(false);
@@ -242,10 +253,11 @@ function DiagramEditorContent() {
 
   const edgeTypes = useMemo(
     () => ({
-      umlEdge: UmlEdge,
+      umlEdge: UmlFloatingEdge,
+      umlFloatingEdge: UmlFloatingEdge,
       umlAssociationClassEdge: UmlAssociationClassEdge,
-      smoothstep: UmlEdge,
-      default: UmlEdge,
+      smoothstep: UmlFloatingEdge,
+      default: UmlFloatingEdge,
     }),
     []
   );
@@ -1335,14 +1347,72 @@ function DiagramEditorContent() {
         payload: JSON.stringify(savedUserMsg),
       });
 
-      // 2. Invocar Copilot IA (Gemini 2.5 Flash)
-      const aiResponse = await chatWithCopilot(
-        content,
-        mode,
-        nodes,
-        edges,
-        diagram?.nombre || "diagrama"
+      const startTime = performance.now();
+      console.group(
+        `%c🤖 [Copilot UML] Iniciando razonamiento... [Modo: ${mode}]`,
+        "color: #6366f1; font-weight: bold; font-size: 12px;"
       );
+      console.log(`⏱️ Inicio: ${new Date().toLocaleTimeString()}`);
+      console.log(`📝 Mensaje usuario: "${content}"`);
+      console.log(`🧠 Motor IA: ${aiEngineConfig.provider} ${aiEngineConfig.provider === "WEBLLM_LOCAL" ? `(${aiEngineConfig.localModelId || "Llama-3.2-1B"})` : "(Gemini Cloud)"}`);
+      console.log(`📊 Contexto del diagrama:`, {
+        totalNodos: nodes.length,
+        totalAristas: edges.length,
+        nodos: nodes.map((n) => ({ id: n.id, nombre: (n.data as any)?.name || (n.data as any)?.label })),
+        historialTurnos: copilotMessages.slice(-8).length,
+      });
+
+      // 2. Invocar Copilot IA (Gemini 2.5 Flash o WebLLM Llama 3.2 Local según motor activo)
+      let aiResponse: { replyText: string; proposal?: any; newNodes?: Node[]; newEdges?: Edge[] };
+
+      if (aiEngineConfig.provider === "WEBLLM_LOCAL") {
+        try {
+          console.log("⚡ Consultando modelo local WebLLM WebGPU...");
+          aiResponse = await chatWithLocalLlm(
+            content,
+            mode,
+            nodes,
+            edges,
+            diagram?.nombre || "diagrama",
+            copilotMessages
+          );
+        } catch (localErr: any) {
+          console.warn("⚠️ Error en motor local WebLLM:", localErr);
+          // Si el usuario está sin internet (offline), no intentar Gemini Cloud
+          if (typeof navigator !== "undefined" && !navigator.onLine) {
+            throw new Error(`El modelo local WebLLM no pudo procesar la solicitud (modo offline): ${localErr.message || "Error interno de WebGPU"}`);
+          }
+          console.warn("Intentando recurrir a Gemini Cloud como respaldo online...");
+          aiResponse = await chatWithCopilot(
+            content,
+            mode,
+            nodes,
+            edges,
+            diagram?.nombre || "diagrama",
+            undefined,
+            copilotMessages
+          );
+        }
+      } else {
+        console.log("☁️ Consultando Google Gemini Cloud API...");
+        aiResponse = await chatWithCopilot(
+          content,
+          mode,
+          nodes,
+          edges,
+          diagram?.nombre || "diagrama",
+          undefined,
+          copilotMessages
+        );
+      }
+
+      const elapsed = ((performance.now() - startTime) / 1000).toFixed(2);
+      console.log(`✅ [Copilot UML] Respuesta recibida en ${elapsed}s:`, {
+        tipo: aiResponse.proposal ? "EDITOR_PROPOSAL (Propuesta de mutación)" : "CHAT_MESSAGE (Respuesta conversacional)",
+        resumenTexto: aiResponse.replyText,
+        propuesta: aiResponse.proposal,
+      });
+      console.groupEnd();
 
       // 3. Crear y persistir mensaje de respuesta de la IA
       const copilotMsg: Partial<ChatMessage> = {
@@ -1810,12 +1880,47 @@ function DiagramEditorContent() {
           maxZoom={2.5}
           panOnDrag={[1, 2]}
           nodesDraggable={true}
+          translateExtent={[[-2500, -2500], [2500, 2500]]}
+          nodeExtent={[[-2450, -2450], [2450, 2450]]}
           defaultEdgeOptions={{
             type: "umlEdge",
           }}
           className="bg-slate-50"
         >
           <Background color="#cbd5e1" gap={20} size={1} variant={BackgroundVariant.Dots} />
+
+          {/* Marco visual perimetral del espacio de trabajo 5000 x 5000 px delimitado */}
+          <svg
+            className="pointer-events-none absolute"
+            style={{
+              position: "absolute",
+              top: -2500,
+              left: -2500,
+              width: 5000,
+              height: 5000,
+              overflow: "visible",
+              zIndex: 0,
+            }}
+          >
+            <rect
+              x="0"
+              y="0"
+              width="5000"
+              height="5000"
+              fill="none"
+              stroke="#94a3b8"
+              strokeWidth="2"
+              strokeDasharray="8 8"
+              opacity="0.6"
+            />
+            <text x="24" y="40" fill="#64748b" fontSize="14" fontWeight="600" fontFamily="sans-serif">
+              Límite Superior Izquierdo (-2500, -2500) · Espacio Delimitado 5000 x 5000 px
+            </text>
+            <text x="4420" y="4976" fill="#64748b" fontSize="14" fontWeight="600" fontFamily="sans-serif">
+              Límite Inferior Derecho (+2500, +2500)
+            </text>
+          </svg>
+
           {/* Controles limpios de Zoom y Centrado */}
           <CustomCanvasControls />
         </ReactFlow>
@@ -1848,6 +1953,8 @@ function DiagramEditorContent() {
           isProactiveThinking={isProactiveThinking}
           applyingProposalId={applyingProposalId}
           aiQuotaError={aiQuotaError}
+          aiConfig={aiEngineConfig}
+          onAiConfigChange={setAiEngineConfig}
         />
 
         {/* Modal para Vincular Visor Móvil Companion (Flutter por QR / Enlace) */}

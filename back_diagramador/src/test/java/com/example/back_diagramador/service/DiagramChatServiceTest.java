@@ -1,9 +1,9 @@
 package com.example.back_diagramador.service;
 
-import com.example.back_diagramador.document.ChatMessageDocument;
+import com.example.back_diagramador.document.ChatMessageDynamoItem;
 import com.example.back_diagramador.dto.ChatMessageDto;
 import com.example.back_diagramador.dto.ChatProposalResolutionDto;
-import com.example.back_diagramador.repository.mongo.ChatMessageMongoRepository;
+import com.example.back_diagramador.repository.dynamo.ChatMessageDynamoRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -24,28 +24,27 @@ import static org.mockito.Mockito.*;
 class DiagramChatServiceTest {
 
     @Mock
-    private ChatMessageMongoRepository chatRepository;
+    private ChatMessageDynamoRepository chatRepository;
 
     @InjectMocks
     private DiagramChatService chatService;
 
-    private ChatMessageDocument sampleDoc;
+    private ChatMessageDynamoItem sampleItem;
     private ChatMessageDto sampleDto;
 
     @BeforeEach
     void setUp() {
-        sampleDoc = ChatMessageDocument.builder()
-                .id("msg-123")
-                .diagramId(10L)
-                .senderType("USER")
-                .userId(1L)
-                .userName("Juan")
-                .mode("CHAT")
-                .messageType("CHAT_MESSAGE")
-                .content("Hola Copilot")
-                .proposalStatus("PENDING")
-                .createdAt(Instant.now())
-                .build();
+        sampleItem = new ChatMessageDynamoItem();
+        sampleItem.setId("msg-123");
+        sampleItem.setDiagramId(10L);
+        sampleItem.setSenderType("USER");
+        sampleItem.setUserId(1L);
+        sampleItem.setUserName("Juan");
+        sampleItem.setMode("CHAT");
+        sampleItem.setMessageType("CHAT_MESSAGE");
+        sampleItem.setContent("Hola Copilot");
+        sampleItem.setProposalStatus("PENDING");
+        sampleItem.setCreatedAt(Instant.now().toString());
 
         sampleDto = ChatMessageDto.builder()
                 .senderType("USER")
@@ -58,9 +57,9 @@ class DiagramChatServiceTest {
     }
 
     @Test
-    @DisplayName("Debe persistir un mensaje de chat en MongoDB y retornar el DTO asignado")
+    @DisplayName("Debe persistir un mensaje de chat en DynamoDB y retornar el DTO asignado")
     void saveMessage_ShouldPersistDocumentAndReturnDto() {
-        when(chatRepository.save(any(ChatMessageDocument.class))).thenReturn(sampleDoc);
+        when(chatRepository.save(any(ChatMessageDynamoItem.class))).thenReturn(sampleItem);
 
         ChatMessageDto result = chatService.saveMessage(10L, sampleDto);
 
@@ -68,22 +67,21 @@ class DiagramChatServiceTest {
         assertEquals("msg-123", result.getId());
         assertEquals(10L, result.getDiagramId());
         assertEquals("Juan", result.getUserName());
-        verify(chatRepository, times(1)).save(any(ChatMessageDocument.class));
+        verify(chatRepository, times(1)).save(any(ChatMessageDynamoItem.class));
     }
 
     @Test
     @DisplayName("Debe retornar el historial cronológico de mensajes para un diagrama")
     void getChatHistory_ShouldReturnChronologicalMessages() {
-        ChatMessageDocument doc2 = ChatMessageDocument.builder()
-                .id("msg-124")
-                .diagramId(10L)
-                .senderType("COPILOT")
-                .userName("Copilot IA")
-                .content("Respuesta")
-                .createdAt(Instant.now())
-                .build();
+        ChatMessageDynamoItem item2 = new ChatMessageDynamoItem();
+        item2.setId("msg-124");
+        item2.setDiagramId(10L);
+        item2.setSenderType("COPILOT");
+        item2.setUserName("Copilot IA");
+        item2.setContent("Respuesta");
+        item2.setCreatedAt(Instant.now().toString());
 
-        when(chatRepository.findByDiagramIdOrderByCreatedAtAsc(10L)).thenReturn(List.of(sampleDoc, doc2));
+        when(chatRepository.findByDiagramIdOrderByCreatedAtAsc(10L)).thenReturn(List.of(sampleItem, item2));
 
         List<ChatMessageDto> history = chatService.getChatHistory(10L);
 
@@ -93,10 +91,22 @@ class DiagramChatServiceTest {
     }
 
     @Test
+    @DisplayName("Debe retornar la memoria de los últimos 8 mensajes para el contexto de la IA")
+    void getLast8Messages_ShouldReturnAtMost8Messages() {
+        when(chatRepository.findLastMessagesByDiagramId(10L, 8)).thenReturn(List.of(sampleItem));
+
+        List<ChatMessageDto> lastMessages = chatService.getLast8Messages(10L);
+
+        assertEquals(1, lastMessages.size());
+        assertEquals("msg-123", lastMessages.get(0).getId());
+        verify(chatRepository, times(1)).findLastMessagesByDiagramId(10L, 8);
+    }
+
+    @Test
     @DisplayName("Debe actualizar el estado a ACCEPTED al resolver una propuesta PENDING")
     void resolveProposal_ShouldUpdateStatusToAccepted_WhenPending() {
-        when(chatRepository.findById("msg-123")).thenReturn(Optional.of(sampleDoc));
-        when(chatRepository.save(any(ChatMessageDocument.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        when(chatRepository.findById("msg-123")).thenReturn(Optional.of(sampleItem));
+        when(chatRepository.save(any(ChatMessageDynamoItem.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
         ChatProposalResolutionDto resolution = ChatProposalResolutionDto.builder()
                 .status("ACCEPTED")
@@ -115,8 +125,8 @@ class DiagramChatServiceTest {
     @Test
     @DisplayName("Debe lanzar IllegalStateException al intentar resolver una propuesta ya resuelta (RN-02.01)")
     void resolveProposal_ShouldThrowConflict_WhenAlreadyResolved() {
-        sampleDoc.setProposalStatus("ACCEPTED");
-        when(chatRepository.findById("msg-123")).thenReturn(Optional.of(sampleDoc));
+        sampleItem.setProposalStatus("ACCEPTED");
+        when(chatRepository.findById("msg-123")).thenReturn(Optional.of(sampleItem));
 
         ChatProposalResolutionDto resolution = ChatProposalResolutionDto.builder()
                 .status("IGNORED")

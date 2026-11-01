@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
+import 'package:intl/intl.dart';
+import '../models/linked_diagram.dart';
 import '../services/local_storage_service.dart';
 import '../state/diagram_viewer_controller.dart';
 import 'canvas_viewer_screen.dart';
@@ -18,34 +20,34 @@ class _LinkEntryScreenState extends State<LinkEntryScreen> {
   final TextEditingController _hostController = TextEditingController(text: 'http://10.0.2.2:8080');
   final LocalStorageService _storageService = LocalStorageService();
 
-  Map<String, dynamic>? _lastSession;
-  bool _isLoadingRecent = true;
+  List<LinkedDiagram> _linkedDiagrams = [];
+  bool _isLoadingList = true;
 
   @override
   void initState() {
     super.initState();
-    _loadRecentSession();
+    _loadLinkedDiagrams();
   }
 
-  Future<void> _loadRecentSession() async {
+  Future<void> _loadLinkedDiagrams() async {
     try {
-      final session = await _storageService.getLastSession();
+      final list = await _storageService.getLinkedDiagrams();
       if (mounted) {
         setState(() {
-          _lastSession = session;
-          _isLoadingRecent = false;
+          _linkedDiagrams = list;
+          _isLoadingList = false;
         });
       }
     } catch (_) {
       if (mounted) {
-        setState(() => _isLoadingRecent = false);
+        setState(() => _isLoadingList = false);
       }
     }
   }
 
-  Future<void> _handleConnect(String input) async {
-    final host = _hostController.text.trim();
-    final fallbackHost = host.isNotEmpty ? host : 'http://10.0.2.2:8080';
+  Future<void> _handleConnect(String input, {String? host}) async {
+    final activeHost = host ?? _hostController.text.trim();
+    final fallbackHost = activeHost.isNotEmpty ? activeHost : 'http://10.0.2.2:8080';
 
     await widget.controller.connectWithInput(input, fallbackHost: fallbackHost);
 
@@ -58,8 +60,8 @@ class _LinkEntryScreenState extends State<LinkEntryScreen> {
           builder: (context) => CanvasViewerScreen(controller: widget.controller),
         ),
       ).then((_) {
-        // Al regresar, refrescar la sesión reciente por si hubo cambios o desvinculación
-        _loadRecentSession();
+        // Al regresar, refrescar la lista de lienzos vinculados
+        _loadLinkedDiagrams();
       });
     } else {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -68,6 +70,55 @@ class _LinkEntryScreenState extends State<LinkEntryScreen> {
           backgroundColor: Colors.redAccent,
         ),
       );
+    }
+  }
+
+  Future<void> _confirmAndUnlink(LinkedDiagram diagram) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: const Color(0xFF1E293B),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Row(
+          children: [
+            Icon(Icons.link_off_rounded, color: Colors.amberAccent, size: 24),
+            SizedBox(width: 10),
+            Text('Desvincular Lienzo', style: TextStyle(color: Colors.white, fontSize: 18)),
+          ],
+        ),
+        content: Text(
+          '¿Estás seguro de que deseas desvincular el diagrama "${diagram.name}" (#${diagram.diagramId})? Ya no aparecerá en tu lista principal hasta que lo vuelvas a vincular.',
+          style: const TextStyle(color: Color(0xFFCBD5E1), fontSize: 13, height: 1.4),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancelar', style: TextStyle(color: Colors.grey)),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFFEF4444), // Red 500
+              foregroundColor: Colors.white,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+            ),
+            child: const Text('Desvincular'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed == true && mounted) {
+      await _storageService.removeLinkedDiagram(diagram.diagramId);
+      await _loadLinkedDiagrams();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Lienzo "${diagram.name}" desvinculado con éxito'),
+            backgroundColor: const Color(0xFF10B981),
+          ),
+        );
+      }
     }
   }
 
@@ -124,13 +175,13 @@ class _LinkEntryScreenState extends State<LinkEntryScreen> {
       ),
       body: SafeArea(
         child: SingleChildScrollView(
-          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 28),
+          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 24),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               // Hero Banner
               Container(
-                padding: const EdgeInsets.all(20),
+                padding: const EdgeInsets.all(18),
                 decoration: BoxDecoration(
                   gradient: const LinearGradient(
                     colors: [Color(0xFF312E81), Color(0xFF1E1B4B)],
@@ -144,54 +195,54 @@ class _LinkEntryScreenState extends State<LinkEntryScreen> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      'Sincronización en Tiempo Real',
+                      'Modelado Colaborativo en Vivo',
                       style: TextStyle(
                         color: Colors.white,
-                        fontSize: 18,
+                        fontSize: 17,
                         fontWeight: FontWeight.bold,
                       ),
                     ),
-                    SizedBox(height: 8),
+                    SizedBox(height: 6),
                     Text(
-                      'Escanea el código QR proyectado en el lienzo web o pega el enlace del diagrama para seguir los cambios en vivo desde tu dispositivo.',
-                      style: TextStyle(color: Color(0xFFCBD5E1), fontSize: 13, height: 1.4),
+                      'Sigue en tiempo real los cambios del lienzo UML desde tu móvil, con notificaciones instantáneas y persistencia multi-lienzo.',
+                      style: TextStyle(color: Color(0xFFCBD5E1), fontSize: 12.5, height: 1.4),
                     ),
                   ],
                 ),
               ),
 
-              const SizedBox(height: 28),
+              const SizedBox(height: 22),
 
               // Botón Principal de Escaneo QR
               ElevatedButton.icon(
                 onPressed: isConnecting ? null : _openQrScanner,
-                icon: const Icon(Icons.qr_code_scanner_rounded, size: 24),
+                icon: const Icon(Icons.qr_code_scanner_rounded, size: 22),
                 label: const Text(
                   'Escanear Código QR',
-                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+                  style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
                 ),
                 style: ElevatedButton.styleFrom(
                   backgroundColor: const Color(0xFF4F46E5), // Indigo 600
                   foregroundColor: Colors.white,
-                  padding: const EdgeInsets.symmetric(vertical: 16),
+                  padding: const EdgeInsets.symmetric(vertical: 14),
                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                  elevation: 4,
+                  elevation: 3,
                 ),
               ),
 
-              const SizedBox(height: 24),
+              const SizedBox(height: 20),
 
               // Separador con texto
               Row(
                 children: [
                   Expanded(child: Divider(color: Colors.white.withValues(alpha: 0.15))),
                   Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 16),
+                    padding: const EdgeInsets.symmetric(horizontal: 14),
                     child: Text(
                       'O INGRESA MANUALMENTE',
                       style: TextStyle(
                         color: Colors.white.withValues(alpha: 0.5),
-                        fontSize: 11,
+                        fontSize: 10.5,
                         fontWeight: FontWeight.bold,
                         letterSpacing: 1.1,
                       ),
@@ -201,20 +252,21 @@ class _LinkEntryScreenState extends State<LinkEntryScreen> {
                 ],
               ),
 
-              const SizedBox(height: 20),
+              const SizedBox(height: 16),
 
               // Campo de entrada de URL o ID
               TextField(
                 controller: _urlOrIdController,
-                style: const TextStyle(color: Colors.white, fontSize: 14),
+                style: const TextStyle(color: Colors.white, fontSize: 13.5),
                 decoration: InputDecoration(
                   labelText: 'URL o ID del Diagrama',
-                  labelStyle: TextStyle(color: Colors.white.withValues(alpha: 0.7)),
+                  labelStyle: TextStyle(color: Colors.white.withValues(alpha: 0.7), fontSize: 13),
                   hintText: 'Ej. 1 o http://.../diagrams/1',
-                  hintStyle: TextStyle(color: Colors.white.withValues(alpha: 0.3)),
-                  prefixIcon: const Icon(Icons.link_rounded, color: Color(0xFF818CF8)),
+                  hintStyle: TextStyle(color: Colors.white.withValues(alpha: 0.3), fontSize: 12),
+                  prefixIcon: const Icon(Icons.link_rounded, color: Color(0xFF818CF8), size: 20),
                   filled: true,
                   fillColor: const Color(0xFF1E293B),
+                  contentPadding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
                   border: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(12),
                     borderSide: BorderSide(color: Colors.white.withValues(alpha: 0.1)),
@@ -230,29 +282,33 @@ class _LinkEntryScreenState extends State<LinkEntryScreen> {
                 ),
               ),
 
-              const SizedBox(height: 12),
+              const SizedBox(height: 10),
 
               // Servidor Backend Host
               TextField(
                 controller: _hostController,
-                style: const TextStyle(color: Colors.white, fontSize: 13),
+                style: const TextStyle(color: Colors.white, fontSize: 12.5),
                 decoration: InputDecoration(
                   labelText: 'Host Backend (API / WebSocket)',
-                  labelStyle: TextStyle(color: Colors.white.withValues(alpha: 0.6), fontSize: 12),
+                  labelStyle: TextStyle(color: Colors.white.withValues(alpha: 0.6), fontSize: 11.5),
                   hintText: 'http://10.0.2.2:8080 (Android) o http://localhost:8080',
-                  hintStyle: TextStyle(color: Colors.white.withValues(alpha: 0.3)),
-                  prefixIcon: const Icon(Icons.dns_rounded, size: 20, color: Color(0xFF94A3B8)),
+                  hintStyle: TextStyle(color: Colors.white.withValues(alpha: 0.3), fontSize: 11),
+                  prefixIcon: const Icon(Icons.dns_rounded, size: 18, color: Color(0xFF94A3B8)),
                   filled: true,
                   fillColor: const Color(0xFF1E293B).withValues(alpha: 0.6),
-                  contentPadding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
+                  contentPadding: const EdgeInsets.symmetric(vertical: 10, horizontal: 14),
                   border: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(12),
                     borderSide: BorderSide(color: Colors.white.withValues(alpha: 0.1)),
                   ),
+                  enabledBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: BorderSide(color: Colors.white.withValues(alpha: 0.15)),
+                  ),
                 ),
               ),
 
-              const SizedBox(height: 18),
+              const SizedBox(height: 14),
 
               // Botón Conectar Manual
               OutlinedButton.icon(
@@ -273,64 +329,140 @@ class _LinkEntryScreenState extends State<LinkEntryScreen> {
                       },
                 icon: isConnecting
                     ? const SizedBox(
-                        width: 18,
-                        height: 18,
+                        width: 16,
+                        height: 16,
                         child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
                       )
-                    : const Icon(Icons.arrow_forward_rounded, size: 20),
+                    : const Icon(Icons.arrow_forward_rounded, size: 18),
                 label: Text(isConnecting ? 'Conectando...' : 'Entrar al Lienzo'),
                 style: OutlinedButton.styleFrom(
                   foregroundColor: const Color(0xFFA5B4FC),
                   side: const BorderSide(color: Color(0xFF6366F1)),
-                  padding: const EdgeInsets.symmetric(vertical: 14),
+                  padding: const EdgeInsets.symmetric(vertical: 12),
                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                 ),
               ),
 
-              const SizedBox(height: 32),
+              const SizedBox(height: 28),
 
-              // Sesión Reciente / Caché Offline
-              if (!_isLoadingRecent && _lastSession != null) ...[
-                Text(
-                  'ÚLTIMA SESIÓN VINCULADA',
-                  style: TextStyle(
-                    color: Colors.white.withValues(alpha: 0.6),
-                    fontSize: 11,
-                    fontWeight: FontWeight.bold,
-                    letterSpacing: 1.1,
+              // SECCIÓN: LIENZOS VINCULADOS (PERSISTENTES HASTA DESVINCULACIÓN MANUAL)
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text(
+                    'LIENZOS VINCULADOS (${_linkedDiagrams.length})',
+                    style: TextStyle(
+                      color: Colors.white.withValues(alpha: 0.65),
+                      fontSize: 11,
+                      fontWeight: FontWeight.bold,
+                      letterSpacing: 1.1,
+                    ),
                   ),
-                ),
-                const SizedBox(height: 10),
-                Card(
-                  color: const Color(0xFF1E293B),
-                  shape: RoundedRectangleBorder(
+                  if (_linkedDiagrams.isNotEmpty)
+                    Text(
+                      'Toca para abrir',
+                      style: TextStyle(
+                        color: Colors.white.withValues(alpha: 0.4),
+                        fontSize: 11,
+                      ),
+                    ),
+                ],
+              ),
+              const SizedBox(height: 10),
+
+              if (_isLoadingList)
+                const Center(
+                  child: Padding(
+                    padding: EdgeInsets.all(20),
+                    child: CircularProgressIndicator(color: Color(0xFF6366F1), strokeWidth: 2),
+                  ),
+                )
+              else if (_linkedDiagrams.isEmpty)
+                Container(
+                  padding: const EdgeInsets.symmetric(vertical: 24, horizontal: 16),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF1E293B).withValues(alpha: 0.4),
                     borderRadius: BorderRadius.circular(12),
-                    side: BorderSide(color: Colors.white.withValues(alpha: 0.1)),
+                    border: Border.all(color: Colors.white.withValues(alpha: 0.08)),
                   ),
-                  child: ListTile(
-                    leading: const CircleAvatar(
-                      backgroundColor: Color(0xFF065F46), // Emerald 800
-                      child: Icon(Icons.save_as_rounded, color: Color(0xFF34D399), size: 20),
-                    ),
-                    title: Text(
-                      _lastSession!['name']?.toString() ?? 'Diagrama Reciente',
-                      style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 14),
-                    ),
-                    subtitle: Text(
-                      'ID: #${_lastSession!['diagramId']} • ${_lastSession!['hostUrl']}',
-                      style: const TextStyle(color: Color(0xFF94A3B8), fontSize: 12),
-                    ),
-                    trailing: const Icon(Icons.chevron_right_rounded, color: Colors.white70),
-                    onTap: () {
-                      final id = _lastSession!['diagramId'].toString();
-                      final host = _lastSession!['hostUrl'].toString();
-                      _hostController.text = host;
-                      _urlOrIdController.text = id;
-                      _handleConnect(id);
-                    },
+                  child: Column(
+                    children: [
+                      Icon(Icons.link_off_rounded, size: 36, color: Colors.white.withValues(alpha: 0.3)),
+                      const SizedBox(height: 8),
+                      Text(
+                        'No tienes lienzos vinculados actualmente.',
+                        style: TextStyle(color: Colors.white.withValues(alpha: 0.7), fontSize: 13),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        'Escanea un código QR para agregarlo a tu lista permanente.',
+                        style: TextStyle(color: Colors.white.withValues(alpha: 0.4), fontSize: 11.5),
+                        textAlign: TextAlign.center,
+                      ),
+                    ],
                   ),
+                )
+              else
+                ListView.separated(
+                  shrinkWrap: true,
+                  physics: const NeverScrollableScrollPhysics(),
+                  itemCount: _linkedDiagrams.length,
+                  separatorBuilder: (context, index) => const SizedBox(height: 8),
+                  itemBuilder: (context, index) {
+                    final diagram = _linkedDiagrams[index];
+                    final dateStr = DateFormat('dd/MM/yyyy HH:mm').format(diagram.lastAccessedAt);
+
+                    return Card(
+                      color: const Color(0xFF1E293B),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        side: BorderSide(color: Colors.white.withValues(alpha: 0.1)),
+                      ),
+                      elevation: 2,
+                      child: ListTile(
+                        contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
+                        leading: Container(
+                          padding: const EdgeInsets.all(8),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF4F46E5).withValues(alpha: 0.2),
+                            borderRadius: BorderRadius.circular(8),
+                            border: Border.all(color: const Color(0xFF6366F1).withValues(alpha: 0.3)),
+                          ),
+                          child: const Icon(Icons.account_tree_outlined, color: Color(0xFF818CF8), size: 20),
+                        ),
+                        title: Text(
+                          diagram.name,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.w600,
+                            fontSize: 14,
+                          ),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        subtitle: Text(
+                          'ID: #${diagram.diagramId} · Último acceso: $dateStr',
+                          style: const TextStyle(color: Color(0xFF94A3B8), fontSize: 11.5),
+                        ),
+                        trailing: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            IconButton(
+                              icon: const Icon(Icons.delete_outline_rounded, color: Color(0xFFF87171), size: 20),
+                              tooltip: 'Desvincular manualmente',
+                              onPressed: () => _confirmAndUnlink(diagram),
+                            ),
+                            const Icon(Icons.chevron_right_rounded, color: Colors.white54, size: 20),
+                          ],
+                        ),
+                        onTap: () {
+                          _hostController.text = diagram.hostUrl;
+                          _urlOrIdController.text = diagram.diagramId.toString();
+                          _handleConnect(diagram.diagramId.toString(), host: diagram.hostUrl);
+                        },
+                      ),
+                    );
+                  },
                 ),
-              ],
             ],
           ),
         ),
@@ -351,7 +483,7 @@ class _QrScannerView extends StatefulWidget {
 
 class _QrScannerViewState extends State<_QrScannerView> {
   final MobileScannerController _scannerController = MobileScannerController();
-  bool _hasDetected = false;
+  bool _hasScanned = false;
 
   @override
   void dispose() {
@@ -364,32 +496,26 @@ class _QrScannerViewState extends State<_QrScannerView> {
     return Scaffold(
       backgroundColor: Colors.black,
       appBar: AppBar(
-        title: const Text('Escanear QR de Vinculación', style: TextStyle(color: Colors.white, fontSize: 16)),
         backgroundColor: Colors.black,
-        iconTheme: const IconThemeData(color: Colors.white),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.flash_on_rounded),
-            onPressed: () => _scannerController.toggleTorch(),
-          ),
-          IconButton(
-            icon: const Icon(Icons.flip_camera_ios_rounded),
-            onPressed: () => _scannerController.switchCamera(),
-          ),
-        ],
+        elevation: 0,
+        title: const Text('Escanear QR de Vinculación', style: TextStyle(color: Colors.white, fontSize: 16)),
+        leading: IconButton(
+          icon: const Icon(Icons.close_rounded, color: Colors.white),
+          onPressed: () => Navigator.pop(context),
+        ),
       ),
       body: Stack(
         children: [
           MobileScanner(
             controller: _scannerController,
-            onDetect: (BarcodeCapture capture) {
-              if (_hasDetected) return;
+            onDetect: (capture) {
+              if (_hasScanned) return;
               final barcodes = capture.barcodes;
               for (final barcode in barcodes) {
-                final val = barcode.rawValue;
-                if (val != null && val.isNotEmpty) {
-                  _hasDetected = true;
-                  widget.onCodeScanned(val);
+                final rawValue = barcode.rawValue;
+                if (rawValue != null && rawValue.isNotEmpty) {
+                  _hasScanned = true;
+                  widget.onCodeScanned(rawValue);
                   break;
                 }
               }
@@ -397,22 +523,12 @@ class _QrScannerViewState extends State<_QrScannerView> {
           ),
           Center(
             child: Container(
-              width: 260,
-              height: 260,
+              width: 250,
+              height: 250,
               decoration: BoxDecoration(
-                border: Border.all(color: const Color(0xFF6366F1), width: 3),
+                border: Border.all(color: const Color(0xFF6366F1), width: 2.5),
                 borderRadius: BorderRadius.circular(16),
               ),
-            ),
-          ),
-          const Positioned(
-            bottom: 40,
-            left: 20,
-            right: 20,
-            child: Text(
-              'Apunta al código QR generado en el lienzo web para sincronizar automáticamente.',
-              textAlign: TextAlign.center,
-              style: TextStyle(color: Colors.white, fontSize: 13, backgroundColor: Colors.black54),
             ),
           ),
         ],

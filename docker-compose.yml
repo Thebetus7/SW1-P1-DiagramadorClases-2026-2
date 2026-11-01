@@ -21,16 +21,34 @@ services:
       retries: 5
 
   # ==========================================================
-  # 1.1 Base de Datos Documental: MongoDB 7
+  # 1.1 Base de Datos NoSQL Documental: DynamoDB Local
   # ==========================================================
-  mongodb:
-    image: mongo:7-jammy
-    container_name: diag_mongodb
+  dynamodb:
+    image: amazon/dynamodb-local:latest
+    container_name: diag_dynamodb
     restart: always
+    command: "-jar DynamoDBLocal.jar -sharedDb -inMemory"
     ports:
-      - "27017:27017"
+      - "8005:8000"
+    networks:
+      - diag_network
+
+  # ==========================================================
+  # 1.2 Almacenamiento de Objetos (S3 Compatible): MinIO
+  # ==========================================================
+  minio:
+    image: minio/minio:latest
+    container_name: diag_minio
+    restart: always
+    command: server /data --console-address ":9001"
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
     volumes:
-      - mongo_data:/data/db
+      - minio_data:/data
     networks:
       - diag_network
 
@@ -46,13 +64,20 @@ services:
     depends_on:
       postgres_db:
         condition: service_healthy
-      mongodb:
+      dynamodb:
+        condition: service_started
+      minio:
         condition: service_started
     environment:
       SPRING_DATASOURCE_URL: jdbc:postgresql://postgres_db:5432/sw1_diag_clases_2026_2
       SPRING_DATASOURCE_USERNAME: postgres
       SPRING_DATASOURCE_PASSWORD: ${DB_PASSWORD:-password123}
-      SPRING_DATA_MONGODB_URI: ${SPRING_DATA_MONGODB_URI:-mongodb://mongodb:27017/sw1_diag_chat}
+      DYNAMODB_ENDPOINT: http://dynamodb:8000
+      AWS_REGION: us-east-1
+      MINIO_ENDPOINT: http://minio:9000
+      MINIO_ACCESS_KEY: minioadmin
+      MINIO_SECRET_KEY: minioadmin
+      MINIO_BUCKET_NAME: sw1-diagramador-assets
       SPRING_JPA_HIBERNATE_DDL_AUTO: update
       SPRING_JPA_SHOW_SQL: "false"
     networks:
@@ -102,5 +127,7 @@ networks:
 volumes:
   postgres_data:
     driver: local
-  mongo_data:
+  dynamodb_data:
+    driver: local
+  minio_data:
     driver: local

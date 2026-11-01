@@ -18,10 +18,13 @@ import {
   Ban,
   CheckCircle2,
   XCircle,
+  Settings,
+  Cpu,
 } from "lucide-react";
-import { ChatMessage, ChatProposalPayload, CopilotMode } from "@/types";
+import { ChatMessage, ChatProposalPayload, CopilotMode, AiEngineConfig } from "@/types";
 import { ProactiveSuggestionCard } from "./ProactiveSuggestionCard";
 import { MarkdownPreview } from "./MarkdownPreview";
+import { AiEngineSettingsModal } from "./AiEngineSettingsModal";
 
 interface CanvasCopilotDrawerProps {
   isOpen: boolean;
@@ -37,6 +40,8 @@ interface CanvasCopilotDrawerProps {
   isProactiveThinking?: boolean;
   applyingProposalId?: string | null;
   aiQuotaError: string | null;
+  aiConfig?: AiEngineConfig;
+  onAiConfigChange?: (config: AiEngineConfig) => void;
 }
 
 interface IWindow extends Window {
@@ -58,12 +63,31 @@ export function CanvasCopilotDrawer({
   isProactiveThinking = false,
   applyingProposalId = null,
   aiQuotaError,
+  aiConfig,
+  onAiConfigChange,
 }: CanvasCopilotDrawerProps) {
   const [inputText, setInputText] = useState("");
   const [mode, setMode] = useState<CopilotMode>("CHAT");
   const [isListening, setIsListening] = useState(false);
   const [speechSupported, setSpeechSupported] = useState(true);
   const [speechFeedback, setSpeechFeedback] = useState<string | null>(null);
+  const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
+
+  const [currentAiConfig, setCurrentAiConfig] = useState<AiEngineConfig>(
+    aiConfig || {
+      provider: "GEMINI_CLOUD",
+      localModelId: "Llama-3.2-3B-Instruct-q4f16_1-MLC",
+      status: "NOT_DOWNLOADED",
+      progressPercent: 0,
+      webGpuSupported: true,
+    }
+  );
+
+  useEffect(() => {
+    if (aiConfig) {
+      setCurrentAiConfig(aiConfig);
+    }
+  }, [aiConfig]);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
@@ -219,10 +243,11 @@ export function CanvasCopilotDrawer({
   if (!isOpen) return null;
 
   return (
-    <aside
-      className="fixed top-0 right-0 h-full w-[420px] max-w-full z-40 bg-white/95 backdrop-blur-md shadow-2xl flex flex-col border-l border-slate-200 animate-in slide-in-from-right duration-300"
-      aria-label="Panel de Copilot IA"
-    >
+    <>
+      <aside
+        className="fixed top-0 right-0 h-full w-[420px] max-w-full z-40 bg-white/95 backdrop-blur-md shadow-2xl flex flex-col border-l border-slate-200 animate-in slide-in-from-right duration-300"
+        aria-label="Panel de Copilot IA"
+      >
       {/* Cabecera del Drawer */}
       <div className="px-4 py-3 border-b border-slate-200/80 bg-gradient-to-r from-slate-900 to-indigo-950 text-white flex items-center justify-between shadow-sm">
         <div className="flex items-center gap-2.5">
@@ -253,20 +278,41 @@ export function CanvasCopilotDrawer({
                   💬 En línea · Modo Chat
                 </span>
               )}
+
+              {/* Indicador de Motor IA (Cloud vs Local) */}
+              {currentAiConfig.provider === "WEBLLM_LOCAL" ? (
+                <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-md bg-emerald-500/20 text-emerald-300 border border-emerald-400/30 flex items-center gap-1">
+                  <Cpu className="w-2.5 h-2.5 text-emerald-300" />
+                  Local
+                </span>
+              ) : (
+                <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-md bg-indigo-500/20 text-indigo-300 border border-indigo-400/30">
+                  Cloud
+                </span>
+              )}
             </div>
-            <p className="text-[11px] text-slate-300 truncate max-w-[260px] mt-0.5">
+            <p className="text-[11px] text-slate-300 truncate max-w-[240px] mt-0.5">
               {diagramName || "Diagrama de Clases"}
             </p>
           </div>
         </div>
 
-        <button
-          onClick={onClose}
-          className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-white/10 transition-colors"
-          title="Cerrar panel"
-        >
-          <X className="w-5 h-5" />
-        </button>
+        <div className="flex items-center gap-1">
+          <button
+            onClick={() => setIsSettingsModalOpen(true)}
+            className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-white/10 transition-colors"
+            title="Configurar motor IA (Cloud Gemini vs Local WebLLM)"
+          >
+            <Settings className="w-4 h-4" />
+          </button>
+          <button
+            onClick={onClose}
+            className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-white/10 transition-colors"
+            title="Cerrar panel"
+          >
+            <X className="w-5 h-5" />
+          </button>
+        </div>
       </div>
 
       {/* Alerta de Cuota Saturada (Texto en Rojo según especificación) */}
@@ -383,8 +429,8 @@ export function CanvasCopilotDrawer({
                                 </>
                               ) : (
                                 <>
-                                  <Pencil className="w-3.5 h-3.5" />
-                                  <span>Editar</span>
+                                  <CheckCircle2 className="w-3.5 h-3.5" />
+                                  <span>Aplicar edición</span>
                                 </>
                               )}
                             </button>
@@ -393,10 +439,10 @@ export function CanvasCopilotDrawer({
                               onClick={() => onIgnoreProposal(msg.id!)}
                               disabled={isLoading || applyingProposalId === msg.id}
                               className="px-3 py-1.5 rounded-lg text-xs font-medium text-slate-600 bg-slate-200/80 hover:bg-slate-300 active:scale-95 transition-all flex items-center gap-1.5 disabled:opacity-50 cursor-pointer"
-                              title="Cancelar propuesta"
+                              title="Descartar propuesta de edición"
                             >
                               <Ban className="w-3.5 h-3.5 text-rose-500" />
-                              <span>Cancelar</span>
+                              <span>Descartar</span>
                             </button>
                           </div>
                         ) : proposalStatus === "ACCEPTED" ? (
@@ -592,5 +638,18 @@ export function CanvasCopilotDrawer({
         </div>
       </form>
     </aside>
+
+    {isSettingsModalOpen && (
+      <AiEngineSettingsModal
+        isOpen={isSettingsModalOpen}
+        onClose={() => setIsSettingsModalOpen(false)}
+        config={currentAiConfig}
+        onConfigChange={(newCfg) => {
+          setCurrentAiConfig(newCfg);
+          onAiConfigChange?.(newCfg);
+        }}
+      />
+    )}
+  </>
   );
 }

@@ -1,6 +1,7 @@
 import 'dart:math';
 import 'package:flutter/material.dart';
 import '../models/diagram_model.dart';
+import 'uml_marker_painter_utils.dart';
 
 class MobileCanvasView extends StatelessWidget {
   final DiagramCanvasData diagram;
@@ -25,22 +26,16 @@ class MobileCanvasView extends StatelessWidget {
       );
     }
 
-    // Calcular límites espaciales del diagrama
-    double maxX = 1200, maxY = 800;
-    for (final node in diagram.nodes) {
-      if (node.x > maxX - 260) maxX = node.x + 300;
-      if (node.y > maxY - 200) maxY = node.y + 300;
-    }
-
-    final canvasWidth = max(maxX + 200, 1500.0);
-    final canvasHeight = max(maxY + 200, 1200.0);
+    // Área delimitada estándar de 5000 x 5000 px según especificación (RF-06.4, RB-10)
+    const double canvasWidth = 5000.0;
+    const double canvasHeight = 5000.0;
 
     final nodeMap = {for (var n in diagram.nodes) n.id: n};
 
     return InteractiveViewer(
-      boundaryMargin: const EdgeInsets.all(500),
-      minScale: 0.2,
-      maxScale: 3.0,
+      boundaryMargin: const EdgeInsets.all(800),
+      minScale: 0.1,
+      maxScale: 3.5,
       constrained: false,
       child: Container(
         width: canvasWidth,
@@ -48,14 +43,14 @@ class MobileCanvasView extends StatelessWidget {
         color: const Color(0xFFF8FAFC), // Slate 50
         child: Stack(
           children: [
-            // Patrón de cuadrícula de fondo
+            // Patrón de cuadrícula de fondo y marco delimitador perimetral
             Positioned.fill(
               child: CustomPaint(
                 painter: GridDotsPainter(),
               ),
             ),
 
-            // Trazado de relaciones y aristas UML
+            // Trazado de relaciones y aristas UML con fidelidad gráfica completa
             Positioned.fill(
               child: CustomPaint(
                 painter: UmlEdgesPainter(edges: diagram.edges, nodesMap: nodeMap),
@@ -79,15 +74,61 @@ class MobileCanvasView extends StatelessWidget {
 class GridDotsPainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
-    final paint = Paint()
+    // 1. Puntos de cuadrícula sutiles
+    final dotPaint = Paint()
       ..color = const Color(0xFFCBD5E1)
       ..strokeWidth = 1.2;
 
     const gap = 24.0;
     for (double x = 0; x < size.width; x += gap) {
       for (double y = 0; y < size.height; y += gap) {
-        canvas.drawCircle(Offset(x, y), 1.0, paint);
+        canvas.drawCircle(Offset(x, y), 1.0, dotPaint);
       }
+    }
+
+    // 2. Marco perimetral punteado delimitando los 5000 x 5000 px
+    final borderPaint = Paint()
+      ..color = const Color(0xFF94A3B8)
+      ..strokeWidth = 2.0
+      ..style = PaintingStyle.stroke;
+
+    _drawDashedRect(canvas, Rect.fromLTWH(4, 4, size.width - 8, size.height - 8), borderPaint);
+
+    // 3. Texto indicador de límites espaciales
+    final textSpan = const TextSpan(
+      text: 'Espacio Delimitado UML 5000 x 5000 px · Visor Móvil Companion',
+      style: TextStyle(
+        color: Color(0xFF64748B),
+        fontSize: 13,
+        fontWeight: FontWeight.bold,
+      ),
+    );
+    final textPainter = TextPainter(
+      text: textSpan,
+      textDirection: TextDirection.ltr,
+    );
+    textPainter.layout();
+    textPainter.paint(canvas, const Offset(20, 20));
+  }
+
+  void _drawDashedRect(Canvas canvas, Rect rect, Paint paint) {
+    _drawDashedSegment(canvas, rect.topLeft, rect.topRight, paint);
+    _drawDashedSegment(canvas, rect.topRight, rect.bottomRight, paint);
+    _drawDashedSegment(canvas, rect.bottomRight, rect.bottomLeft, paint);
+    _drawDashedSegment(canvas, rect.bottomLeft, rect.topLeft, paint);
+  }
+
+  void _drawDashedSegment(Canvas canvas, Offset p1, Offset p2, Paint paint) {
+    const dashLength = 8.0;
+    const dashSpace = 6.0;
+    final totalDistance = (p2 - p1).distance;
+    final count = (totalDistance / (dashLength + dashSpace)).floor();
+    final unitVector = (p2 - p1) / totalDistance;
+
+    for (int i = 0; i < count; i++) {
+      final start = p1 + unitVector * (i * (dashLength + dashSpace));
+      final end = start + unitVector * dashLength;
+      canvas.drawLine(start, end, paint);
     }
   }
 
@@ -103,67 +144,99 @@ class UmlEdgesPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
+    const strokeColor = Color(0xFF334155); // Slate 700
+
     for (final edge in edges) {
       final source = nodesMap[edge.source];
       final target = nodesMap[edge.target];
       if (source == null || target == null) continue;
 
-      // Centros aproximados de nodos (ancho aprox 220, alto aprox 120)
-      final p1 = Offset(source.x + 110, source.y + 60);
-      final p2 = Offset(target.x + 110, target.y + 60);
+      // Estimación del tamaño de cada tarjeta de clase
+      const double cardW = 220.0;
+      final double sourceH = max(110.0, 70.0 + (source.attributes.length + source.methods.length) * 16.0);
+      final double targetH = max(110.0, 70.0 + (target.attributes.length + target.methods.length) * 16.0);
 
-      final paint = Paint()
-        ..color = const Color(0xFF475569) // Slate 600
+      final c1 = Offset(source.x + cardW / 2, source.y + sourceH / 2);
+      final c2 = Offset(target.x + cardW / 2, target.y + targetH / 2);
+
+      // Calcular puntos de intersección perimetral directa centro-a-borde
+      final p1 = UmlMarkerPainterUtils.getNodePerimeterIntersection(c1, c2, cardW, sourceH);
+      final p2 = UmlMarkerPainterUtils.getNodePerimeterIntersection(c2, c1, cardW, targetH);
+
+      final linePaint = Paint()
+        ..color = strokeColor
         ..strokeWidth = 1.8
         ..style = PaintingStyle.stroke;
 
-      if (edge.relationType == 'DEPENDENCY' || edge.relationType == 'REALIZATION') {
-        _drawDashedLine(canvas, p1, p2, paint);
+      final relType = edge.relationType.toUpperCase();
+
+      // 1. Trazado del cuerpo de la línea (punteada vs continua)
+      if (relType == 'DEPENDENCY' || relType == 'REALIZATION') {
+        _drawDashedLine(canvas, p1, p2, linePaint);
       } else {
-        canvas.drawLine(p1, p2, paint);
+        canvas.drawLine(p1, p2, linePaint);
       }
 
-      // Dibujar etiqueta de tipo de relación si existe
-      if (edge.relationType.isNotEmpty && edge.relationType != 'ASSOCIATION') {
-        final mid = Offset((p1.dx + p2.dx) / 2, (p1.dy + p2.dy) / 2);
-        _drawLabel(canvas, mid, edge.relationType);
+      // 2. Renderizado de marcadores gráficos UML 2.5 orientados
+      switch (relType) {
+        case 'GENERALIZATION':
+        case 'REALIZATION':
+          UmlMarkerPainterUtils.drawClosedTriangle(canvas, p2, p1, strokeColor);
+          break;
+
+        case 'DIRECTED_ASSOCIATION':
+        case 'DEPENDENCY':
+          UmlMarkerPainterUtils.drawOpenArrow(canvas, p2, p1, strokeColor);
+          break;
+
+        case 'AGGREGATION':
+          UmlMarkerPainterUtils.drawDiamond(canvas, p1, p2, strokeColor, isFilled: false);
+          break;
+
+        case 'COMPOSITION':
+          UmlMarkerPainterUtils.drawDiamond(canvas, p1, p2, strokeColor, isFilled: true);
+          break;
+
+        case 'ASSOCIATION':
+        default:
+          break;
+      }
+
+      // 3. Multiplicidades de Origen y Destino
+      final dist = (p2 - p1).distance;
+      if (dist > 30) {
+        final ux = (p2.dx - p1.dx) / dist;
+        final uy = (p2.dy - p1.dy) / dist;
+        final perpX = -uy;
+        final perpY = ux;
+
+        if (edge.sourceMultiplicity.isNotEmpty) {
+          final sourcePos = Offset(p1.dx + ux * 26 + perpX * 14, p1.dy + uy * 26 + perpY * 14);
+          UmlMarkerPainterUtils.drawMultiplicityText(canvas, sourcePos, edge.sourceMultiplicity);
+        }
+
+        if (edge.targetMultiplicity.isNotEmpty) {
+          final targetPos = Offset(p2.dx - ux * 26 + perpX * 14, p2.dy - uy * 26 + perpY * 14);
+          UmlMarkerPainterUtils.drawMultiplicityText(canvas, targetPos, edge.targetMultiplicity);
+        }
       }
     }
   }
 
   void _drawDashedLine(Canvas canvas, Offset p1, Offset p2, Paint paint) {
-    const dashWidth = 5.0;
+    const dashWidth = 6.0;
     const dashSpace = 4.0;
-    final dx = p2.dx - p1.dx;
-    final dy = p2.dy - p1.dy;
-    final count = (sqrt(dx * dx + dy * dy) / (dashWidth + dashSpace)).floor();
-    for (int i = 0; i < count; i++) {
-      final startFrac = (i * (dashWidth + dashSpace)) / sqrt(dx * dx + dy * dy);
-      final endFrac = min(1.0, ((i * (dashWidth + dashSpace)) + dashWidth) / sqrt(dx * dx + dy * dy));
-      canvas.drawLine(
-        Offset(p1.dx + dx * startFrac, p1.dy + dy * startFrac),
-        Offset(p1.dx + dx * endFrac, p1.dy + dy * endFrac),
-        paint,
-      );
-    }
-  }
+    final dist = (p2 - p1).distance;
+    if (dist <= 0) return;
 
-  void _drawLabel(Canvas canvas, Offset pos, String text) {
-    final textSpan = TextSpan(
-      text: text,
-      style: const TextStyle(
-        color: Color(0xFF475569),
-        fontSize: 9,
-        fontWeight: FontWeight.w600,
-        backgroundColor: Colors.white,
-      ),
-    );
-    final textPainter = TextPainter(
-      text: textSpan,
-      textDirection: TextDirection.ltr,
-    );
-    textPainter.layout();
-    textPainter.paint(canvas, Offset(pos.dx - textPainter.width / 2, pos.dy - textPainter.height / 2));
+    final count = (dist / (dashWidth + dashSpace)).floor();
+    final unit = (p2 - p1) / dist;
+
+    for (int i = 0; i < count; i++) {
+      final start = p1 + unit * (i * (dashWidth + dashSpace));
+      final end = start + unit * dashWidth;
+      canvas.drawLine(start, end, paint);
+    }
   }
 
   @override
@@ -200,14 +273,17 @@ class UmlClassCard extends StatelessWidget {
             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
             decoration: const BoxDecoration(
               color: Color(0xFFF1F5F9), // Slate 100
-              borderRadius: BorderRadius.vertical(top: Radius.circular(7)),
-              border: Border(bottom: BorderSide(color: Color(0xFFCBD5E1))),
+              borderRadius: BorderRadius.only(
+                topLeft: Radius.circular(7),
+                topRight: Radius.circular(7),
+              ),
+              border: Border(bottom: BorderSide(color: Color(0xFFE2E8F0))),
             ),
             child: Column(
               children: [
                 if (node.stereotype.isNotEmpty)
                   Text(
-                    '<<${node.stereotype}>>',
+                    '«${node.stereotype}»',
                     style: const TextStyle(
                       fontSize: 10,
                       fontStyle: FontStyle.italic,
@@ -216,70 +292,82 @@ class UmlClassCard extends StatelessWidget {
                   ),
                 Text(
                   node.name,
+                  textAlign: TextAlign.center,
                   style: const TextStyle(
                     fontSize: 13,
                     fontWeight: FontWeight.bold,
-                    color: Color(0xFF0F172A),
+                    color: Color(0xFF0F172A), // Slate 900
                   ),
-                  textAlign: TextAlign.center,
-                  overflow: TextOverflow.ellipsis,
                 ),
               ],
             ),
           ),
 
-          // Sección de Atributos
+          // Compartimento de Atributos
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                if (node.attributes.isEmpty)
-                  const Text(
-                    '(sin atributos)',
-                    style: TextStyle(fontSize: 10, color: Color(0xFF94A3B8), fontStyle: FontStyle.italic),
-                  )
-                else
-                  for (final attr in node.attributes)
-                    Text(
-                      attr,
-                      style: const TextStyle(
-                        fontSize: 11,
-                        fontFamily: 'monospace',
-                        color: Color(0xFF1E293B),
-                      ),
-                      overflow: TextOverflow.ellipsis,
-                    ),
-              ],
+            decoration: const BoxDecoration(
+              color: Colors.white,
+              border: Border(bottom: BorderSide(color: Color(0xFFE2E8F0))),
             ),
+            child: node.attributes.isEmpty
+                ? const Text(
+                    'sin atributos',
+                    style: TextStyle(fontSize: 10, fontStyle: FontStyle.italic, color: Color(0xFF94A3B8)),
+                  )
+                : Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: node.attributes
+                        .map(
+                          (attr) => Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 1.5),
+                            child: Text(
+                              attr,
+                              style: const TextStyle(
+                                fontSize: 11,
+                                fontFamily: 'monospace',
+                                color: Color(0xFF334155),
+                              ),
+                            ),
+                          ),
+                        )
+                        .toList(),
+                  ),
           ),
 
-          const Divider(height: 1, color: Color(0xFFE2E8F0)),
-
-          // Sección de Métodos
+          // Compartimento de Métodos
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                if (node.methods.isEmpty)
-                  const Text(
-                    '(sin métodos)',
-                    style: TextStyle(fontSize: 10, color: Color(0xFF94A3B8), fontStyle: FontStyle.italic),
-                  )
-                else
-                  for (final m in node.methods)
-                    Text(
-                      m,
-                      style: const TextStyle(
-                        fontSize: 11,
-                        fontFamily: 'monospace',
-                        color: Color(0xFF334155),
-                      ),
-                      overflow: TextOverflow.ellipsis,
-                    ),
-              ],
+            decoration: const BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.only(
+                bottomLeft: Radius.circular(7),
+                bottomRight: Radius.circular(7),
+              ),
             ),
+            child: node.methods.isEmpty
+                ? const Text(
+                    'sin métodos',
+                    style: TextStyle(fontSize: 10, fontStyle: FontStyle.italic, color: Color(0xFF94A3B8)),
+                  )
+                : Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: node.methods
+                        .map(
+                          (m) => Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 1.5),
+                            child: Text(
+                              m,
+                              style: const TextStyle(
+                                fontSize: 11,
+                                fontFamily: 'monospace',
+                                color: Color(0xFF334155),
+                              ),
+                            ),
+                          ),
+                        )
+                        .toList(),
+                  ),
           ),
         ],
       ),
