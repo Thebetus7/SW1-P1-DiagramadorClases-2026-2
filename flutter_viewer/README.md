@@ -48,3 +48,4 @@ flutter install
 1. Abre la aplicación en tu teléfono.
 2. Ingresa el **ID del diagrama** (por ejemplo: `1` o `2`) o pega la URL completa (ej. `http://52.90.161.62/diagrams/1`), o escanea el código QR desde la web.
 3. Presiona **Conectar**. El diagrama se cargará y sincronizará en tiempo real con los cambios que hagas en el navegador.
+
