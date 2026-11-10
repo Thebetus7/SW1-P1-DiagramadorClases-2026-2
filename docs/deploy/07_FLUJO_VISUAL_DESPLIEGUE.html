@@ -369,7 +369,7 @@ NEXT_PUBLIC_GEMINI_API_KEY=<TU_GEMINI_API_KEY>`,
                         title: "Lanzar Instancia EC2 Amazon Linux 2023",
                         context: "[CONSOLA AWS EC2]",
                         path: "EC2 > Instances",
-                        desc: "Selecciona Amazon Linux 2023 AMI, tipo t3.small o t2.micro, 30 GB EBS gp3 y asigna el IAM Role EC2-DynamoDB-Diagramador-Role.",
+                        desc: "Selecciona Amazon Linux 2023 AMI, tipo t3.small o t2.micro, 30 GB EBS gp3 y asigna el IAM Role EC2-DynamoDB-Diagramador-Role con el Security Group secgroup-diagramador-uml-prod.",
                         code: `# Security Group requerido:
 # Puerto 22 (SSH)
 # Puerto 80 (HTTP)

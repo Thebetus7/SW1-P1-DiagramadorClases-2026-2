@@ -108,7 +108,9 @@ aws dynamodb create-table \
 > **Contexto de Ejecución:** `[CONSOLA WEB AWS - EC2]`
 
 1. En la consola de **EC2**, ve a **Network & Security** > **Security Groups** > **Create security group**.
-2. **Security group name:** `sg-diagramador-uml-prod`
+2. **Security group name:** `secgroup-diagramador-uml-prod` *(o `diagramador-uml-prod-sg`)*
+   > [!NOTE]
+   > AWS reserva el prefijo `sg-` para los IDs generados por el sistema (ej. `sg-0a1b2c3d4e`), por lo que no permite nombres que comiencen por `sg-`.
 3. **Description:** `Permitir SSH, HTTP y HTTPS para Diagramador UML`
 4. **VPC:** Deja la VPC por defecto.
 5. **Inbound rules (Reglas de entrada):**
@@ -141,7 +143,7 @@ aws dynamodb create-table \
    - **Descarga el archivo `.pem` y guárdalo en un lugar seguro.**
 6. **Network settings (Configuración de red):**
    - Haz clic en **Edit**.
-   - Selecciona el Security Group creado en el paso anterior: `sg-diagramador-uml-prod`.
+   - Selecciona el Security Group creado en el paso anterior: `secgroup-diagramador-uml-prod`.
    - **Auto-assign public IP:** Asegúrate de que esté en **Enable** (Habilitado).
 7. **Configure storage (Almacenamiento):**
    - Asigna **30 GiB** de tipo **gp3** (el límite máximo mensual gratuito en EBS).
