@@ -1,259 +1,76 @@
-# Paso 01: Configuración de Archivos Docker para el Proyecto
+# ⚙️ 01. Configurar el Proyecto para Producción con DynamoDB
 
-En este paso se definen los archivos de configuración requeridos para empaquetar y orquestar el sistema completo en contenedores Docker antes de desplegarlo en la máquina virtual de AWS.
+[⬅️ Volver a 00_RESUMEN_GENERAL.md](./00_RESUMEN_GENERAL.md) | [Siguiente: 02_CREAR_INFRAESTRUCTURA_AWS.md ➡️](./02_CREAR_INFRAESTRUCTURA_AWS.md)
+
+---
+
+Este documento detalla la estructura del entorno de producción, las variables requeridas en `.env` y el archivo de orquestación `docker-compose.yml` para operar fluidamente con **Amazon DynamoDB en AWS** o en modo de contingencia local.
+
+---
+
+### 🚀 Paso 1: Configurar las Variables de Entorno de Producción (`.env`)
 
 > [!NOTE]
-> Puedes crear estos archivos en tu repositorio local y subirlos con `git push`, o bien crearlos directamente en la instancia EC2 mediante el editor `nano`.
+> **Propósito:** Definir los secretos y parámetros de conexión para PostgreSQL, Amazon DynamoDB, MinIO y Next.js sin exponer credenciales en el código fuente ni en repositorios públicos.
+> **Contexto de Ejecución:** `[PC LOCAL]` / `[SSH / SERVIDOR]`
+> **Ruta de Trabajo:** Raíz del proyecto (`/`)
 
----
+Crea el archivo `.env` en la raíz de tu proyecto tomando como base esta plantilla estructurada:
 
-## 📁 1. Estructura de Archivos a Crear
+```bash
+# ==============================================================================
+# ARCHIVO DE VARIABLES DE PRODUCCIÓN (.env)
+# ==============================================================================
 
-```
-SW1-P1-DiagramadorClases-2026-2/
-├── back_diagramador/
-│   ├── Dockerfile             <-- [NUEVO] Empaquetado de Spring Boot
-│   └── .dockerignore          <-- [NUEVO] Exclusiones de build Java
-├── front_diag_clases/
-│   ├── Dockerfile             <-- [NUEVO] Empaquetado de Next.js
-│   └── .dockerignore          <-- [NUEVO] Exclusiones de build Node
-├── nginx/
-│   └── nginx.conf             <-- [NUEVO] Configuración del Reverse Proxy y WebSockets
-└── docker-compose.yml         <-- [NUEVO] Orquestador de los 4 servicios
-```
+# --- 1. SEGURIDAD DE BASE DE DATOS RELACIONAL (PostgreSQL 16) ---
+# Contraseña de alta entropía para el usuario 'postgres' en el contenedor Docker
+DB_PASSWORD=<TU_DB_PASSWORD_PRODUCCION>
 
----
+# --- 2. CONFIGURACIÓN DE AMAZON DYNAMODB (AWS) ---
+# Región de AWS donde se aloja la tabla DynamoDB 'DiagramChatMessages'
+AWS_REGION=us-east-1
 
-## ☕ 2. Dockerfile del Backend (Spring Boot + Java 17)
+# Para usar Amazon DynamoDB administrado en AWS: DEJAR VACÍO o eliminar DYNAMODB_ENDPOINT.
+# Si el valor está vacío, el AWS SDK v2 se conectará automáticamente a DynamoDB en AWS.
+# (Solo si se requiere DynamoDB local en pruebas, colocar: http://dynamodb:8000)
+DYNAMODB_ENDPOINT=
 
-Crea el archivo `back_diagramador/Dockerfile`:
+# Credenciales IAM de AWS (Solo requeridas si no se utiliza un IAM Role en la instancia EC2)
+AWS_ACCESS_KEY_ID=<TU_AWS_ACCESS_KEY_ID>
+AWS_SECRET_ACCESS_KEY=<TU_AWS_SECRET_ACCESS_KEY>
 
-```dockerfile
-# ==========================================
-# ETAPA 1: Compilación y empaquetado Maven
-# ==========================================
-FROM eclipse-temurin:17-jdk-jammy AS builder
-WORKDIR /app
+# --- 3. ALMACENAMIENTO DE ARCHIVOS (MinIO / S3) ---
+MINIO_ROOT_USER=minioadmin
+MINIO_ROOT_PASSWORD=<TU_MINIO_SECRET_PASSWORD>
+MINIO_BUCKET_NAME=sw1-diagramador-assets
 
-# Copiar archivos de Maven Wrapper y dependencias primero para cachear capas
-COPY .mvn/ .mvn/
-COPY mvnw pom.xml ./
-RUN chmod +x mvnw && ./mvnw dependency:go-offline -B
-
-# Copiar el código fuente y empaquetar en archivo .jar omitiendo tests unitarios
-COPY src ./src
-RUN ./mvnw clean package -DskipTests -B
-
-# ==========================================
-# ETAPA 2: Imagen de ejecución ligera (JRE)
-# ==========================================
-FROM eclipse-temurin:17-jre-jammy
-WORKDIR /app
-
-# Crear usuario sin privilegios root por seguridad
-RUN groupadd -r appgroup && useradd -r -g appgroup appuser
-
-# Copiar el ejecutable generado desde la etapa de compilación
-COPY --from=builder /app/target/*.jar app.jar
-RUN chown -R appuser:appgroup /app
-
-USER appuser
-
-# Exponer el puerto interno de Spring Boot
-EXPOSE 8080
-
-# Limitar memoria Heap a 384 MB para no agotar la RAM de la instancia gratuita t2/t3.micro
-ENV JAVA_OPTS="-Xms128m -Xmx384m -Djava.security.egd=file:/dev/./urandom -Dfile.encoding=UTF-8"
-
-ENTRYPOINT ["sh", "-c", "java $JAVA_OPTS -jar app.jar"]
-```
-
-Crea el archivo `back_diagramador/.dockerignore`:
-```
-target/
-.mvn/wrapper/maven-wrapper.jar
-.git/
-.gitignore
-*.md
-.idea/
-*.iml
-```
-
----
-
-## 🌐 3. Dockerfile del Frontend (Next.js + Node 20)
-
-Crea el archivo `front_diag_clases/Dockerfile`:
-
-```dockerfile
-# ==========================================
-# ETAPA 1: Instalación de dependencias
-# ==========================================
-FROM node:20-alpine AS deps
-WORKDIR /app
-RUN apk add --no-cache libc6-compat
-COPY package.json package-lock.json* ./
-RUN npm install
-
-# ==========================================
-# ETAPA 2: Construcción de la aplicación Next.js
-# ==========================================
-FROM node:20-alpine AS builder
-WORKDIR /app
-COPY --from=deps /app/node_modules ./node_modules
-COPY . .
-
-# Argumentos de entorno para incrustar en tiempo de build
-ARG NEXT_PUBLIC_API_URL=/api
-ARG NEXT_PUBLIC_WS_URL=/ws
-ARG NEXT_PUBLIC_GEMINI_API_KEY=""
-
-ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
-ENV NEXT_PUBLIC_WS_URL=$NEXT_PUBLIC_WS_URL
-ENV NEXT_PUBLIC_GEMINI_API_KEY=$NEXT_PUBLIC_GEMINI_API_KEY
-ENV NEXT_TELEMETRY_DISABLED=1
-
-RUN npm run build
-
-# ==========================================
-# ETAPA 3: Imagen final de ejecución
-# ==========================================
-FROM node:20-alpine AS runner
-WORKDIR /app
-
-ENV NODE_ENV=production
-ENV NEXT_TELEMETRY_DISABLED=1
-
-RUN addgroup --system --gid 1001 nodejs
-RUN adduser --system --uid 1001 nextjs
-
-# Copiar archivos estáticos y bundle de producción
-COPY --from=builder /app/public ./public
-COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
-COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
-
-USER nextjs
-
-EXPOSE 3000
-ENV PORT=3000
-ENV HOSTNAME="0.0.0.0"
-
-CMD ["node", "server.js"]
+# --- 4. INTEGRACIÓN IA Y GEMINI ---
+# Clave API para el asistente Copilot de Google Gemini (opcional en frontend/backend)
+NEXT_PUBLIC_GEMINI_API_KEY=<TU_GEMINI_API_KEY>
 ```
 
 > [!TIP]
-> Para usar el modo `standalone` de Next.js (el cual produce un contenedor ultraligero de solo ~150 MB), verifica que tu archivo `front_diag_clases/next.config.ts` o `next.config.js` incluya `output: "standalone"`.
-> Si no lo tienes, puedes agregarlo así:
-> ```typescript
-> const nextConfig = {
->   output: "standalone",
->   /* otras configuraciones */
-> };
-> export default nextConfig;
+> **Verificación Observable:**
+> Asegúrate de que el archivo `.env` no tenga espacios alrededor del signo igual (`=`) y que esté incluido en el archivo `.gitignore` para evitar filtraciones accidentales:
+> ```bash
+> git check-ignore -v .env
+> # Salida esperada: .gitignore:XX:.env
 > ```
 
-Crea el archivo `front_diag_clases/.dockerignore`:
-```
-node_modules/
-.next/
-out/
-.git/
-.gitignore
-*.md
-.env*.local
-```
-
 ---
 
-## 🛡️ 4. Configuración de Nginx Reverse Proxy (`nginx/nginx.conf`)
+### 🚀 Paso 2: Orquestación de Contenedores (`docker-compose.yml`)
 
-Nginx recibirá todas las peticiones en el puerto `80` y las enrutará internamente:
-- Peticiones a `/api/` ➔ Backend Spring Boot (`http://backend:8080/api/`).
-- Peticiones a `/ws` ➔ WebSockets STOMP de Spring Boot con headers de `Upgrade`.
-- Peticiones a `/` ➔ Frontend Next.js (`http://frontend:3000`).
+> [!NOTE]
+> **Propósito:** Orquestar los servicios de la aplicación con red privada, límites de memoria y reinicio automático ante caídas del servidor.
+> **Contexto de Ejecución:** `[PC LOCAL]` / `[SSH / SERVIDOR]`
+> **Ruta de Trabajo:** `docker-compose.yml`
 
-Crea la carpeta `nginx` y el archivo `nginx/nginx.conf`:
-
-```nginx
-events {
-    worker_connections 1024;
-}
-
-http {
-    include       /etc/nginx/mime.types;
-    default_type  application/octet-stream;
-    sendfile        on;
-    keepalive_timeout  65;
-    client_max_body_size 25M;
-
-    # Mapa para soporte correcto de WebSockets STOMP
-    map $http_upgrade $connection_upgrade {
-        default upgrade;
-        ''      close;
-    }
-
-    upstream backend_upstream {
-        server backend:8080;
-    }
-
-    upstream frontend_upstream {
-        server frontend:3000;
-    }
-
-    server {
-        listen 80;
-        server_name _;
-
-        # 1. Enrutamiento hacia API REST de Spring Boot
-        location /api/ {
-            proxy_pass http://backend_upstream/api/;
-            proxy_http_version 1.1;
-            proxy_set_header Host $host;
-            proxy_set_header X-Real-IP $remote_addr;
-            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-            proxy_set_header X-Forwarded-Proto $scheme;
-            proxy_read_timeout 90s;
-        }
-
-        # 2. Enrutamiento hacia WebSockets en tiempo real (/ws)
-        location /ws {
-            proxy_pass http://backend_upstream/ws;
-            proxy_http_version 1.1;
-            proxy_set_header Upgrade $http_upgrade;
-            proxy_set_header Connection $connection_upgrade;
-            proxy_set_header Host $host;
-            proxy_set_header X-Real-IP $remote_addr;
-            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-            proxy_read_timeout 86400s;
-            proxy_send_timeout 86400s;
-        }
-
-        # 3. Enrutamiento hacia Frontend Next.js (Todo el tráfico restante)
-        location / {
-            proxy_pass http://frontend_upstream;
-            proxy_http_version 1.1;
-            proxy_set_header Upgrade $http_upgrade;
-            proxy_set_header Connection $connection_upgrade;
-            proxy_set_header Host $host;
-            proxy_set_header X-Real-IP $remote_addr;
-            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-            proxy_set_header X-Forwarded-Proto $scheme;
-        }
-    }
-}
-```
-
----
-
-## 🐳 5. Orquestador Docker Compose (`docker-compose.yml`)
-
-Crea en la raíz del proyecto el archivo `docker-compose.yml`:
+El archivo `docker-compose.yml` de la raíz del proyecto está preparado para el ecosistema de producción:
 
 ```yaml
 services:
-  # ==========================================================
-  # 1. Base de Datos: PostgreSQL 16
-  # ==========================================================
+  # 1. Base de Datos Relacional: PostgreSQL 16
   postgres_db:
     image: postgres:16-alpine
     container_name: diag_postgres
@@ -272,9 +89,23 @@ services:
       timeout: 5s
       retries: 5
 
-  # ==========================================================
-  # 2. Backend: Spring Boot + Java 17 + STOMP WebSockets
-  # ==========================================================
+  # 2. MinIO (S3 Compatible para Archivos y Assets)
+  minio:
+    image: minio/minio:latest
+    container_name: diag_minio
+    restart: always
+    command: server /data --console-address ":9001"
+    ports:
+      - "127.0.0.1:9000:9000"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+    volumes:
+      - minio_data:/data
+    networks:
+      - diag_network
+
+  # 3. Backend: Spring Boot 3.5 + STOMP WebSockets + AWS SDK DynamoDB
   backend:
     build:
       context: ./back_diagramador
@@ -284,18 +115,27 @@ services:
     depends_on:
       postgres_db:
         condition: service_healthy
+      minio:
+        condition: service_started
     environment:
       SPRING_DATASOURCE_URL: jdbc:postgresql://postgres_db:5432/sw1_diag_clases_2026_2
       SPRING_DATASOURCE_USERNAME: postgres
-      SPRING_DATASOURCE_PASSWORD: ${DB_PASSWORD:-password123}
+      SPRING_DATASOURCE_PASSWORD: ${DB_PASSWORD}
+      # Conexión a AWS DynamoDB administrado
+      DYNAMODB_ENDPOINT: ${DYNAMODB_ENDPOINT:-}
+      AWS_REGION: ${AWS_REGION:-us-east-1}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      MINIO_ENDPOINT: http://minio:9000
+      MINIO_ACCESS_KEY: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin}
+      MINIO_BUCKET_NAME: ${MINIO_BUCKET_NAME:-sw1-diagramador-assets}
       SPRING_JPA_HIBERNATE_DDL_AUTO: update
       SPRING_JPA_SHOW_SQL: "false"
     networks:
       - diag_network
 
-  # ==========================================================
-  # 3. Frontend: Next.js + React 19 + Tailwind CSS
-  # ==========================================================
+  # 4. Frontend: Next.js 16 + React 19 + Tailwind v4
   frontend:
     build:
       context: ./front_diag_clases
@@ -311,9 +151,7 @@ services:
     networks:
       - diag_network
 
-  # ==========================================================
-  # 4. Reverse Proxy: Nginx en Puerto 80
-  # ==========================================================
+  # 5. Reverse Proxy: Nginx en Puerto 80
   proxy:
     image: nginx:alpine
     container_name: diag_proxy
@@ -328,32 +166,41 @@ services:
     networks:
       - diag_network
 
-# Red interna privada compartida entre los contenedores
 networks:
   diag_network:
     driver: bridge
 
-# Volumen persistente para que la base de datos no pierda información
 volumes:
   postgres_data:
     driver: local
+  minio_data:
+    driver: local
 ```
+
+> [!TIP]
+> **Verificación Observable:**
+> Realiza una validación de sintaxis del archivo `docker-compose.yml` ejecutando:
+> ```bash
+> docker compose config
+> ```
+> La salida debe imprimir la configuración renderizada sin emitir ningún error de sintaxis YAML.
 
 ---
 
-## 🔒 6. Archivo de Variables de Entorno (`.env.example`)
+### 🚀 Paso 3: Compatibilidad de DynamoDB en el Código Backend
 
-Crea en la raíz del proyecto el archivo `.env.example`:
+> [!NOTE]
+> **Propósito:** Comprender cómo Spring Boot gestiona el endpoint y las credenciales hacia Amazon DynamoDB.
+> **Contexto de Inspección:** `back_diagramador/src/main/java/com/example/back_diagramador/config/DynamoDbConfig.java`
 
-```env
-# Contraseña de la base de datos PostgreSQL en producción
-DB_PASSWORD=TuPasswordSeguro123!
-
-# Clave de API de Google Gemini para reconocimiento de diagramas con IA
-NEXT_PUBLIC_GEMINI_API_KEY=AIzaSy...
-```
+El código Java utiliza el **AWS SDK v2 (Enhanced Client)** con la siguiente lógica de inicialización:
+1. Si la variable `DYNAMODB_ENDPOINT` está vacía o ausente, el cliente **no** aplica sobreescritura de URL y se conecta automáticamente al servicio administrado de DynamoDB en la región definida (`AWS_REGION=us-east-1`).
+2. Al arrancar, el bean `initDynamoDbTables` ejecuta automáticamente un chequeo:
+   - Si la tabla `DiagramChatMessages` ya existe en AWS, el backend continuará sin alterarla.
+   - Si la tabla aún no existe, intentará crearla con el índice global secundario `MessageIdIndex`.
+   - Sin embargo, para mayor seguridad y control de cuotas en AWS, crearemos la tabla explícitamente en el **Paso 02**.
 
 ---
 
-> **Volver al Índice:** [00_RESUMEN_GENERAL.md](./00_RESUMEN_GENERAL.md)  
-> **Siguiente Paso:** [02_CREAR_INSTANCIA_AWS.md](./02_CREAR_INSTANCIA_AWS.md)
+[⬅️ Volver a 00_RESUMEN_GENERAL.md](./00_RESUMEN_GENERAL.md) | [Siguiente: 02_CREAR_INFRAESTRUCTURA_AWS.md ➡️](./02_CREAR_INFRAESTRUCTURA_AWS.md)
+

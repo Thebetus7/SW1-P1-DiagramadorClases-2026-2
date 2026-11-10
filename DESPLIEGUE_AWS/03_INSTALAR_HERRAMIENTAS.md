@@ -1,155 +1,163 @@
-# Paso 03: Conexión SSH e Instalación de Herramientas en Amazon Linux 2023
+# 🔧 03. Instalar Herramientas en Amazon Linux 2023
 
-En este paso aprenderás a conectarte remotamente a tu servidor EC2 mediante SSH, configurar **memoria SWAP** para evitar caídas por falta de memoria (Out Of Memory), e instalar **Docker**, **Docker Compose** y el complemento **Docker Buildx** requerido en Amazon Linux 2023.
+[⬅️ Volver a 02_CREAR_INFRAESTRUCTURA_AWS.md](./02_CREAR_INFRAESTRUCTURA_AWS.md) | [Siguiente: 04_DESPLEGAR_Y_VERIFICAR.md ➡️](./04_DESPLEGAR_Y_VERIFICAR.md)
 
 ---
 
-## 🔑 1. Conexión Remota por SSH a la Instancia
+Este documento detalla el aprovisionamiento del sistema operativo **Amazon Linux 2023 (AL2023)** a través de SSH, la configuración de memoria de intercambio (*Swap*) de seguridad y la instalación oficial de **Docker Engine**, **Docker Compose** y **Git**.
 
-Abre tu terminal en la carpeta donde descargaste tu archivo `clave-diagramador-aws.pem`.
+---
 
-### A. Si usas Windows (PowerShell):
-En Windows, si la clave tiene permisos demasiado abiertos, OpenSSH puede arrojar un error de advertencia. Puedes conectarte directamente con:
+### 🚀 Paso 1: Conexión SSH Segura al Servidor
 
-```powershell
-ssh -i "C:\Users\USUARIO\.ssh\sw1-ec2-key.pem" ec2-user@3.15.230.109
-```
+> [!NOTE]
+> **Propósito:** Iniciar sesión en la consola del servidor remoto como usuario administrador predeterminado (`ec2-user`).
+> **Contexto de Ejecución:** `[PC LOCAL]`
+> **Ruta de Trabajo:** Carpeta donde descargaste tu archivo `clave-diagramador-aws.pem`
 
-Si PowerShell muestra un error indicando *"Permissions for sw1-ec2-key.pem are too open"*, ejecuta estos comandos para restringir los permisos en Windows:
-```powershell
-icacls "C:\Users\USUARIO\.ssh\sw1-ec2-key.pem" /inheritance:r
-icacls "C:\Users\USUARIO\.ssh\sw1-ec2-key.pem" /grant:r "$($env:USERNAME):(R)"
-```
+En sistemas Unix / macOS o terminal PowerShell / Git Bash de Windows:
 
-### B. Si usas Linux o macOS:
-Asegura permisos de solo lectura al propietario y conéctate:
 ```bash
+# [PC LOCAL] 1. Ajustar permisos del archivo de clave privada (solo lectura para el propietario)
 chmod 400 clave-diagramador-aws.pem
-ssh -i clave-diagramador-aws.pem ec2-user@<TU_IP_PUBLICA_EC2>
+
+# [PC LOCAL] 2. Conectarse vía SSH a la IP pública de la instancia EC2
+ssh -i "clave-diagramador-aws.pem" ec2-user@<TU_IP_PUBLICA>
 ```
 
 > [!TIP]
-> Cuando te pregunte: `Are you sure you want to continue connecting (yes/no/[fingerprint])?`, escribe **`yes`** y presiona `Enter`. Verás el banner de bienvenida con el logotipo de **Amazon Linux 2023**.
+> **Verificación Observable:**
+> La consola debe mostrar el banner oficial de bienvenida de AWS:
+> ```text
+>    ,     #_
+>    ~\_  ####_        Amazon Linux 2023
+>   ~~  \ _#####\
+>   ~~     \###|       AL2023 AMI
+>   ~~       \#/ ___
+>    ~~       V~' '->
+>     ~~~         /
+>       ~~       /
+>        '--____/
+> [ec2-user@ip-172-31-XX-XX ~]$
+> ```
 
 ---
 
-## ⚡ 2. Configuración OBLIGATORIA de Memoria SWAP (2 GB)
+### 🚀 Paso 2: Actualizar el Sistema Operativo (AL2023)
 
-Las instancias de la capa gratuita (`t2.micro` o `t3.micro`) cuentan únicamente con **1 GiB de memoria RAM física**. La compilación de TypeScript en Next.js y el empaquetado Maven de Spring Boot consumen más de 1 GB durante el proceso de build. Sin memoria de intercambio, el kernel de Linux activará el *OOM Killer* y cancelará la compilación.
-
-Ejecuta los siguientes comandos en tu terminal SSH para habilitar 2 GB de memoria SWAP:
+> [!NOTE]
+> **Propósito:** Instalar las últimas actualizaciones de seguridad y paquetes base usando el gestor `dnf` nativo de Amazon Linux 2023.
+> **Contexto de Ejecución:** `[SSH / SERVIDOR]`
 
 ```bash
-# 1. Crear un archivo de swap de 2 GB (16 bloques de 128 MB)
+# [SSH / SERVIDOR] Actualizar paquetes del sistema
+sudo dnf update -y
+```
+
+> [!TIP]
+> **Verificación Observable:**
+> El comando finalizará con el mensaje:
+> ```text
+> Complete!
+> Nothing to do. Complete!
+> ```
+
+---
+
+### 🚀 Paso 3: Configurar Memoria Swap de Seguridad (2 GB)
+
+> [!IMPORTANT]
+> **Prevención de Caídas por Out-Of-Memory (OOM):**
+> Compilar aplicaciones Next.js y empaquetar Spring Boot consume picos de memoria RAM. En instancias con 1 GB o 2 GB de RAM (como `t2.micro` o `t3.micro`), crear un archivo Swap de 2 GB evita que el compilador sea terminado por el kernel de Linux.
+
+> [!NOTE]
+> **Contexto de Ejecución:** `[SSH / SERVIDOR]`
+
+```bash
+# [SSH / SERVIDOR] Crear archivo de intercambio de 2GB
 sudo dd if=/dev/zero of=/swapfile bs=128M count=16
 
-# 2. Asignar permisos estrictos de lectura y escritura solo para root
+# Ajustar permisos de lectura estricta
 sudo chmod 600 /swapfile
 
-# 3. Formatear el archivo como espacio de intercambio SWAP
+# Inicializar y habilitar el espacio swap
 sudo mkswap /swapfile
-
-# 4. Activar el espacio SWAP en el sistema
 sudo swapon /swapfile
 
-# 5. Registrar en fstab para que persista automáticamente ante reinicios
+# Configurar persistencia tras reinicios en fstab
 echo '/swapfile swap swap defaults 0 0' | sudo tee -a /etc/fstab
-
-# 6. Optimizar la agresividad de swap (swappiness)
-sudo sysctl vm.swappiness=20
-echo 'vm.swappiness=20' | sudo tee -a /etc/sysctl.conf
 ```
 
-Verifica que el swap esté activo ejecutando:
-```bash
-free -h
-```
-*(Debes observar en la fila `Swap:` un total cercano a `2.0Gi`).*
+> [!TIP]
+> **Verificación Observable:**
+> Ejecuta `free -h` y comprueba que la línea `Swap` indique aproximadamente `2.0Gi`:
+> ```bash
+> free -h
+> # Salida esperada:
+> #               total        used        free      shared  buff/cache   available
+> # Mem:          950Mi       210Mi       140Mi       1.0Mi       600Mi       610Mi
+> # Swap:         2.0Gi          0B       2.0Gi
+> ```
 
 ---
 
-## 📦 3. Actualización de Paquetes e Instalación de Herramientas Base
+### 🚀 Paso 4: Instalar Docker Engine, Docker Compose Plugin y Git
 
-Amazon Linux 2023 utiliza el gestor de paquetes **`dnf`**. Actualiza el sistema e instala Git y Docker:
+> [!NOTE]
+> **Propósito:** Instalar el motor de contenedores oficial distribuido en los repositorios certificados de Amazon Linux 2023.
+> **Contexto de Ejecución:** `[SSH / SERVIDOR]`
 
-```bash
-# 1. Actualizar repositorios y paquetes instalados
-sudo dnf update -y
-
-# 2. Instalar Git y Docker nativo de los repositorios de Amazon Linux 2023
-sudo dnf install -y git docker
-```
-
----
-
-## 🐳 4. Iniciar Docker y Configurar Permisos de Usuario
+En Amazon Linux 2023, Docker se encuentra optimizado en el repositorio base:
 
 ```bash
-# 1. Iniciar el servicio de Docker
-sudo systemctl start docker
+# [SSH / SERVIDOR] 1. Instalar Docker y Git mediante dnf
+sudo dnf install -y docker git
 
-# 2. Habilitar Docker para que inicie automáticamente al encender el servidor
-sudo systemctl enable docker
+# [SSH / SERVIDOR] 2. Instalar el plugin oficial Docker Compose v2
+DOCKER_CONFIG=${DOCKER_CONFIG:-/usr/local/lib/docker}
+sudo mkdir -p $DOCKER_CONFIG/cli-plugins
+sudo curl -SL https://github.com/docker/compose/releases/latest/download/docker-compose-linux-$(uname -m) -o $DOCKER_CONFIG/cli-plugins/docker-compose
+sudo chmod +x $DOCKER_CONFIG/cli-plugins/docker-compose
 
-# 3. Agregar el usuario actual (ec2-user) al grupo docker para usar comandos sin 'sudo'
+# [SSH / SERVIDOR] 3. Iniciar y habilitar el servicio Docker para arranque automático
+sudo systemctl enable --now docker
+
+# [SSH / SERVIDOR] 4. Agregar el usuario ec2-user al grupo docker para operar sin sudo
 sudo usermod -aG docker ec2-user
-
-# 4. Refrescar el grupo en la sesión actual sin necesidad de reconectarse
-newgrp docker
 ```
+
+> [!CAUTION]
+> **Aplicar Cambios de Grupo:**
+> Para que los permisos de grupo surtan efecto sin cerrar la sesión SSH, ejecuta:
+> ```bash
+> newgrp docker
+> ```
 
 ---
 
-## 🛠️ 5. Solución Crítica en Amazon Linux 2023: Instalación de Docker Compose y Buildx
+### 🚀 Paso 5: Tabla de Verificación de Herramientas Instaladas
 
-> [!WARNING]
-> En Amazon Linux 2023, el paquete Docker no incluye la versión moderna de **Buildx**, lo que provoca el error:  
-> `compose build requires buildx 0.17.0 or later`.  
-> Para evitar cualquier fallo, instalamos los complementos CLI oficiales más recientes:
+> [!NOTE]
+> **Propósito:** Confirmar de forma observable que todas las herramientas están operativas.
+> **Contexto de Ejecución:** `[SSH / SERVIDOR]`
 
-Ejecuta este bloque de comandos para instalar **Docker Compose CLI** y **Docker Buildx**:
+Ejecuta los siguientes comandos de auditoría:
 
 ```bash
-# 1. Crear directorio para complementos de Docker CLI
-sudo mkdir -p /usr/local/lib/docker/cli-plugins
-
-# 2. Descargar Docker Compose v2 (última versión estable para Linux x86_64)
-sudo curl -SL "https://github.com/docker/compose/releases/latest/download/docker-compose-linux-x86_64" \
-  -o /usr/local/lib/docker/cli-plugins/docker-compose
-
-# 3. Descargar Docker Buildx (última versión estable >= 0.17.0)
-sudo curl -SL "https://github.com/docker/buildx/releases/latest/download/buildx-v0.21.1.linux-amd64" \
-  -o /usr/local/lib/docker/cli-plugins/docker-buildx
-
-# 4. Asignar permisos de ejecución a ambos complementos
-sudo chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
-sudo chmod +x /usr/local/lib/docker/cli-plugins/docker-buildx
-
-# 5. Crear enlace simbólico para que el comando clásico 'docker-compose' también funcione
-sudo ln -sf /usr/local/lib/docker/cli-plugins/docker-compose /usr/local/bin/docker-compose
+# [SSH / SERVIDOR] Validar versiones
+docker --version
+docker compose version
+git --version
 ```
 
----
-
-## ✅ 6. Checklist de Verificación de Instalación
-
-Ejecuta los siguientes comandos para certificar que tu servidor está completamente preparado:
-
-| Comando | Salida Esperada | Estado |
+| Herramienta | Comando de Auditoría | Salida Mínima Esperada |
 | :--- | :--- | :--- |
-| `git --version` | `git version 2.4X.X` | Requerido |
-| `docker --version` | `Docker version 25.X.X` o superior | Requerido |
-| `docker compose version` | `Docker Compose version v2.X.X` | Requerido |
-| `docker buildx version` | `github.com/docker/buildx v0.2X.X` | Requerido |
-| `free -h` | `Swap: 2.0Gi` | Requerido |
-
-```bash
-# Ejecutar verificación rápida completa:
-docker --version && docker compose version && docker buildx version && free -h
-```
+| **Docker Engine** | `docker --version` | `Docker version 25.x` o superior |
+| **Docker Compose** | `docker compose version` | `Docker Compose version v2.x` |
+| **Git** | `git --version` | `git version 2.40.x` o superior |
+| **Demonio Docker** | `docker ps` | `CONTAINER ID   IMAGE   COMMAND   CREATED   STATUS   PORTS   NAMES` |
 
 ---
 
-> **Paso Anterior:** [02_CREAR_INSTANCIA_AWS.md](./02_CREAR_INSTANCIA_AWS.md)  
-> **Volver al Índice:** [00_RESUMEN_GENERAL.md](./00_RESUMEN_GENERAL.md)  
-> **Siguiente Paso:** [04_DESPLEGAR_Y_VERIFICAR.md](./04_DESPLEGAR_Y_VERIFICAR.md)
+[⬅️ Volver a 02_CREAR_INFRAESTRUCTURA_AWS.md](./02_CREAR_INFRAESTRUCTURA_AWS.md) | [Siguiente: 04_DESPLEGAR_Y_VERIFICAR.md ➡️](./04_DESPLEGAR_Y_VERIFICAR.md)
+

@@ -1,143 +1,192 @@
-# Paso 04: Despliegue y Verificación en Producción
+# 🚀 04. Desplegar y Verificar en Producción con DynamoDB
 
-En este paso clonarás el código fuente en tu servidor EC2, configurarás las variables de entorno de producción, compilarás y levantarás los contenedores con Docker Compose, y verificarás el funcionamiento del sistema en tu navegador web mediante la dirección IP pública.
+[⬅️ Volver a 03_INSTALAR_HERRAMIENTAS.md](./03_INSTALAR_HERRAMIENTAS.md) | [Siguiente: 05_ACTUALIZAR_PRODUCCION.md ➡️](./05_ACTUALIZAR_PRODUCCION.md)
 
 ---
 
-## 📥 1. Clonar el Repositorio en la Instancia
+Este documento detalla la clonación del proyecto en el servidor Amazon Linux 2023, la configuración de variables de producción, la compilación de imágenes Docker, el arranque de los servicios y la batería de pruebas de verificación física (REST, WebSockets y conexión a DynamoDB).
 
-Desde tu sesión SSH en la instancia (`ec2-user@...`):
+---
 
-```bash
-# 1. Asegurarte de estar en tu directorio de inicio
-cd /home/ec2-user
-
-# 2. Clonar el repositorio del proyecto
-git clone https://github.com/Thebetus7/SW1-P1-DiagramadorClases-2026-2.git
-
-# 3. Entrar en la carpeta del proyecto
-cd SW1-P1-DiagramadorClases-2026-2
-```
+### 🚀 Paso 1: Clonar el Repositorio en el Servidor EC2
 
 > [!NOTE]
-> Si tu repositorio en GitHub es **privado**, cuando Git te solicite la contraseña, debes ingresar un **Personal Access Token (PAT)** de GitHub con permisos `repo`, ya que GitHub no admite contraseñas de cuenta directa por HTTPS.
+> **Propósito:** Descargar el código fuente en el directorio de trabajo del usuario `ec2-user`.
+> **Contexto de Ejecución:** `[SSH / SERVIDOR]`
+> **Ruta de Trabajo:** `/home/ec2-user`
+
+```bash
+# [SSH / SERVIDOR] Clonar el repositorio
+cd /home/ec2-user
+git clone https://github.com/<TU_USUARIO>/<TU_REPOSITORIO>.git app_diagramador
+
+# Ingresar al directorio del proyecto
+cd app_diagramador
+```
+
+> [!TIP]
+> **Verificación Observable:**
+> Ejecuta `ls -la` y confirma la presencia de `docker-compose.yml`, `back_diagramador`, `front_diag_clases` y `nginx`.
 
 ---
 
-## ⚙️ 2. Crear el Archivo de Variables de Entorno (`.env`)
+### 🚀 Paso 2: Crear el Archivo de Producción `.env`
 
-Crea y edita el archivo `.env` en la raíz del proyecto con el editor `nano`:
+> [!NOTE]
+> **Propósito:** Configurar las variables con contraseñas seguras y la conexión hacia DynamoDB en la nube.
+> **Contexto de Ejecución:** `[SSH / SERVIDOR]`
+> **Ruta de Trabajo:** `/home/ec2-user/app_diagramador`
+
+Crea el archivo `.env` utilizando el editor `nano`:
 
 ```bash
 nano .env
 ```
 
-Pega la siguiente configuración (ajusta la contraseña y tu clave de Gemini si la tienes):
+Pega la siguiente configuración reemplazando los placeholders:
 
-```env
-# Contraseña de la base de datos PostgreSQL en el contenedor
-DB_PASSWORD=SuperPasswordSeguro2026!
+```bash
+# --- 1. Base de Datos Relacional PostgreSQL ---
+DB_PASSWORD=<TU_DB_PASSWORD_PRODUCCION>
 
-# Clave de API de Google Gemini (Opcional: para funciones de visión e IA)
-NEXT_PUBLIC_GEMINI_API_KEY=AIzaSy...
+# --- 2. Amazon DynamoDB Administrado en AWS ---
+AWS_REGION=us-east-1
+
+# IMPORTANTE: Dejar DYNAMODB_ENDPOINT vacío para conectar a DynamoDB en AWS
+DYNAMODB_ENDPOINT=
+
+# Si la instancia EC2 tiene asignado el IAM Role (EC2-DynamoDB-Diagramador-Role),
+# estas credenciales NO son necesarias y pueden omitirse:
+AWS_ACCESS_KEY_ID=
+AWS_SECRET_ACCESS_KEY=
+
+# --- 3. MinIO S3 Compatible ---
+MINIO_ROOT_USER=minioadmin
+MINIO_ROOT_PASSWORD=<TU_MINIO_SECRET_PASSWORD>
+MINIO_BUCKET_NAME=sw1-diagramador-assets
+
+# --- 4. Google Gemini Copilot ---
+NEXT_PUBLIC_GEMINI_API_KEY=<TU_GEMINI_API_KEY>
 ```
 
-> *Para guardar en `nano`: presiona `Ctrl + O`, presiona `Enter`, y sal con `Ctrl + X`.*
+Presiona `Ctrl + O` seguido de `Enter` para guardar, y luego `Ctrl + X` para salir.
 
 ---
 
-## 🚀 3. Compilación y Puesta en Marcha (`docker compose up`)
+### 🚀 Paso 3: Construir y Levantar los Contenedores con Docker Compose
 
-Ejecuta el comando para construir las imágenes y levantar los cuatro servicios en segundo plano:
+> [!NOTE]
+> **Propósito:** Construir las imágenes de producción optimizadas (JAR empaquetado de Spring Boot y standalone bundle de Next.js) e iniciar todos los contenedores en segundo plano.
+> **Contexto de Ejecución:** `[SSH / SERVIDOR]`
+> **Ruta de Trabajo:** `/home/ec2-user/app_diagramador`
 
 ```bash
+# [SSH / SERVIDOR] Construcción y arranque en segundo plano
 docker compose up -d --build
 ```
 
-### ¿Qué sucede durante este comando?
-1. **Descarga de imágenes base:** Se descargan `postgres:16-alpine` y `nginx:alpine`.
-2. **Construcción del Backend:** Maven descarga dependencias dentro del contenedor builder, compila el código Java 17 y genera el archivo `app.jar` que se ejecuta sobre un JRE optimizado.
-3. **Construcción del Frontend:** Node 20 instala dependencias, compila Next.js en modo standalone y genera el bundle estático de producción.
-4. **Inicio de servicios en orden:** PostgreSQL inicia y pasa su healthcheck; inmediatamente después arrancan el backend Spring Boot, el frontend Next.js y el proxy Nginx.
+> [!TIP]
+> **Verificación Observable:**
+> Una vez completado el build, inspecciona el estado de los contenedores:
+> ```bash
+> docker compose ps
+> ```
+> Todos los contenedores deben mostrar estado `Up` o `Up (healthy)`:
+> ```text
+> NAME            IMAGE                         STATUS                  PORTS
+> diag_postgres   postgres:16-alpine            Up (healthy)            5432/tcp
+> diag_minio      minio/minio:latest            Up                      127.0.0.1:9000->9000/tcp
+> diag_backend    app_diagramador-backend       Up                      8080/tcp
+> diag_frontend   app_diagramador-frontend      Up                      3000/tcp
+> diag_proxy      nginx:alpine                  Up                      0.0.0.0:80->80/tcp
+> ```
+
+---
+
+### 🚀 Paso 4: Verificar la Conexión con Amazon DynamoDB en los Logs
+
+> [!NOTE]
+> **Propósito:** Comprobar que el backend de Spring Boot se comunicó exitosamente con la tabla de DynamoDB en AWS.
+> **Contexto de Ejecución:** `[SSH / SERVIDOR]`
+
+```bash
+# [SSH / SERVIDOR] Inspeccionar logs de inicialización del backend
+docker compose logs backend | grep -i "DynamoDB"
+```
 
 > [!TIP]
-> La primera compilación tomará entre **3 y 6 minutos** debido a la descarga de paquetes y el build de Java y Next.js con el swap. Las siguientes reconstrucciones serán mucho más rápidas gracias a la caché de capas de Docker.
+> **Salida Esperada Confirmada:**
+> ```text
+> INFO  --- [back_diagramador] : Inicializando DynamoDbClient hacia endpoint: , region: us-east-1
+> INFO  --- [back_diagramador] : Verificando existencia de tabla DynamoDB: DiagramChatMessages
+> INFO  --- [back_diagramador] : La tabla DynamoDB DiagramChatMessages ya existe y está lista para operar.
+> ```
 
 ---
 
-## 🔍 4. Verificación del Estado de los Contenedores
+### 🚀 Paso 5: Batería de Pruebas de Verificación Física
 
-Una vez finalizado el comando, revisa que los 4 contenedores estén en estado **Up**:
+> [!NOTE]
+> **Propósito:** Probar de punta a punta la disponibilidad de la plataforma en la red pública.
+> **Contexto de Ejecución:** `[PC LOCAL / NAVEGADOR WEB]`
+
+Realiza las siguientes 3 pruebas observables:
+
+1. **Prueba de Frontend (Next.js):**
+   - Abre en tu navegador web: `http://<TU_IP_PUBLICA>`
+   - **Resultado Esperado:** Carga inmediata de la pantalla principal del editor de diagramas UML con React Flow y la barra superior de herramientas.
+
+2. **Prueba de API REST (Spring Boot):**
+   - Ejecuta desde tu terminal local:
+     ```bash
+     curl -i http://<TU_IP_PUBLICA>/api/diagrams
+     ```
+   - **Resultado Esperado:** Respuesta HTTP `200 OK` con un array JSON `[]` o la lista de diagramas registrados.
+
+3. **Prueba de WebSockets STOMP (/ws):**
+   - Abre la consola del navegador (`F12` > pestaña *Console* / *Red* > *WS*).
+   - Observa la conexión exitosa hacia `ws://<TU_IP_PUBLICA>/ws`:
+     ```text
+     [StompClient] Connected to STOMP broker!
+     ```
+
+---
+
+### 🚀 Paso 6: Configurar Cifrado HTTPS con Let's Encrypt y Certbot (Opcional si tienes Dominio)
+
+> [!NOTE]
+> **Propósito:** Cifrar todo el tráfico entre los usuarios y el servidor con un certificado SSL gratuito reconocido mundialmente.
+> **Contexto de Ejecución:** `[SSH / SERVIDOR]`
+> **Prerrequisito:** Apuntar un registro DNS tipo `A` de tu dominio (ej. `diagramador.tudominio.com`) hacia `<TU_IP_PUBLICA>`.
 
 ```bash
-docker compose ps
-```
+# [SSH / SERVIDOR] 1. Instalar Certbot en Amazon Linux 2023
+sudo dnf install -y python3-certbot-nginx
 
-**Salida esperada:**
+# [SSH / SERVIDOR] 2. Generar certificado (Detener Nginx temporalmente si se usa modo standalone)
+sudo certbot certonly --standalone -d <TU_DOMINIO> --agree-tos -m <TU_EMAIL> --non-interactive
 ```
-NAME            IMAGE                              COMMAND                  SERVICE       STATUS
-diag_postgres   postgres:16-alpine                 "docker-entrypoint.s…"   postgres_db   Up (healthy)
-diag_backend    sw1-p1-diagramador...-backend      "sh -c 'java $JAVA_O…"   backend       Up
-diag_frontend   sw1-p1-diagramador...-frontend     "node server.js"         frontend      Up
-diag_proxy      nginx:alpine                       "/docker-entrypoint.…"   proxy         Up
-```
-
-### Inspección de Logs en Vivo
-Para observar los mensajes de arranque de Spring Boot y Next.js:
-
-```bash
-# Ver los logs de todos los servicios:
-docker compose logs -f
-
-# O ver los logs de un servicio específico (ej: backend):
-docker compose logs -f backend
-```
-*(Presiona `Ctrl + C` para salir de la visualización de logs).*
 
 ---
 
-## 🌐 5. Prueba de Acceso desde el Navegador Web
+## 🛠️ Solución de Problemas Frecuentes (Troubleshooting)
 
-1. Abre tu navegador web favorito (Chrome, Edge, Firefox).
-2. En la barra de direcciones, escribe la **Dirección IPv4 Pública** de tu instancia EC2 precedida de `http://`:
-   ```
-   http://<TU_IP_PUBLICA_EC2>
-   ```
-   *(Ejemplo: `http://54.210.88.145`)*
+### 1. `DynamoDbException: User: arn:aws:sts:... is not authorized to perform: dynamodb:DescribeTable`
+* **Causa:** El IAM Role asignado a la instancia EC2 carece de permisos sobre la tabla `DiagramChatMessages`.
+* **Solución:** Revisa la política IAM creada en el Paso 02 (`02_CREAR_INFRAESTRUCTURA_AWS.md`) y asegúrate de que el ARN apunte a `arn:aws:dynamodb:*:*:table/DiagramChatMessages`.
 
-> [!IMPORTANT]
-> Asegúrate de escribir estrictamente **`http://`** y **NO** `https://`, ya que la instancia está sirviendo el puerto 80 estándar sin certificado SSL configurado.
-
-### Flujo de Prueba Rápida para el Examen Universitario:
-1. **Página de Inicio / Login:** Ingresa con los usuarios de prueba o regístrate.
-2. **Crear Diagrama:** Crea un nuevo diagrama de clases en el panel principal.
-3. **Canvas React Flow:** Añade clases UML, relaciones y notas UML.
-4. **Colaboración en Tiempo Real:** Abre una pestaña en modo incógnito (o dile a un compañero que ingrese a tu IP) y verifica que los movimientos de clases y cursores se reflejen instantáneamente mediante los WebSockets `/ws`.
-5. **Exportación XMI:** Haz clic en **Previsualizar / Exportar XMI** y descarga el archivo para verificar compatibilidad con Enterprise Architect.
-
----
-
-## 🩺 6. Solución de Problemas Frecuentes (Troubleshooting)
-
-### A. "No se puede acceder a este sitio" en el navegador
-- **Causa 1:** El Security Group de AWS no tiene abierto el puerto 80.  
-  *Solución:* Ve a la consola de AWS > EC2 > Security Groups > Edita las reglas de entrada y agrega `HTTP` en puerto `80` con origen `0.0.0.0/0`.
-- **Causa 2:** El navegador autocompleta con `https://`.  
-  *Solución:* Escribe explícitamente `http://` antes de la IP.
-
-### B. El contenedor Backend se reinicia continuamente
-- Ejecuta `docker compose logs backend` para ver el error.
-- Si dice `Connection refused to postgres_db:5432`, PostgreSQL aún no había terminado de inicializarse. Reinicia con:
+### 2. `Connection refused to postgres_db:5432`
+* **Causa:** El backend intentó conectarse antes de que PostgreSQL estuviera completamente listo para aceptar conexiones.
+* **Solución:** Gracias a la directiva `condition: service_healthy` en `docker-compose.yml`, Docker maneja la espera automáticamente. Si persiste, reinicia con:
   ```bash
   docker compose restart backend
   ```
 
-### C. La compilación se detuvo con `Killed` o `Error 137`
-- **Causa:** Se agotó la memoria RAM física.
-- **Solución:** Verifica con `free -h` si configuraste la memoria SWAP de 2 GB explicada en el Paso 03. Si `Swap: 0`, vuelve al Paso 03 y activa el archivo swap.
+### 3. Peticiones WebSocket fallan con `400 Bad Request` o `Upgrade Required`
+* **Causa:** El proxy inverso no está transmitiendo los encabezados de actualización de protocolo.
+* **Solución:** Verifica que `nginx/nginx.conf` incluya el bloque `map $http_upgrade $connection_upgrade` y las directivas `proxy_set_header Upgrade $http_upgrade` en el bloque `/ws`.
 
 ---
 
-> **Paso Anterior:** [03_INSTALAR_HERRAMIENTAS.md](./03_INSTALAR_HERRAMIENTAS.md)  
-> **Volver al Índice:** [00_RESUMEN_GENERAL.md](./00_RESUMEN_GENERAL.md)  
-> **Siguiente Paso:** [05_ACTUALIZAR_PRODUCCION.md](./05_ACTUALIZAR_PRODUCCION.md)
+[⬅️ Volver a 03_INSTALAR_HERRAMIENTAS.md](./03_INSTALAR_HERRAMIENTAS.md) | [Siguiente: 05_ACTUALIZAR_PRODUCCION.md ➡️](./05_ACTUALIZAR_PRODUCCION.md)
+
