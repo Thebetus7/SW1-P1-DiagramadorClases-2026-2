@@ -27,7 +27,7 @@ class DiagramViewerController extends ChangeNotifier {
   Timer? _toastDismissTimer;
 
   int? _currentDiagramId;
-  String _currentHostUrl = 'http://10.0.2.2:8080';
+  String _currentHostUrl = 'http://52.90.161.62';
 
   ViewerConnectionState get connectionState => _connectionState;
   DiagramCanvasData? get diagramData => _diagramData;
@@ -40,7 +40,7 @@ class DiagramViewerController extends ChangeNotifier {
   bool get isOffline => _connectionState == ViewerConnectionState.offlineCached;
 
   /// Inicia el flujo de conexión a partir de una URL escaneada o un ID numérico
-  Future<void> connectWithInput(String input, {String fallbackHost = 'http://10.0.2.2:8080'}) async {
+  Future<void> connectWithInput(String input, {String fallbackHost = 'http://52.90.161.62'}) async {
     // 1. Sanitizar comillas simples, dobles o barras accidentales al inicio/fin
     final cleaned = input.trim().replaceAll(RegExp(r"""^['"/]+|['"/]+$"""), '').trim();
     if (cleaned.isEmpty) {
@@ -53,7 +53,7 @@ class DiagramViewerController extends ChangeNotifier {
     int? diagramId;
     String hostUrl = fallbackHost.trim();
     if (hostUrl.isEmpty) {
-      hostUrl = 'http://10.0.2.2:8080';
+      hostUrl = 'http://52.90.161.62';
     }
 
     // 2. Extraer ID del diagrama mediante Regex (/diagrams/20 o ?id=20 o número directo)

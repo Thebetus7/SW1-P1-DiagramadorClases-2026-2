@@ -142,7 +142,7 @@ class LocalStorageService {
     final diagramId = prefs.getInt(_keyLastDiagramId);
     if (diagramId == null) return null;
 
-    final hostUrl = prefs.getString(_keyLastHostUrl) ?? 'http://10.0.2.2:8080';
+    final hostUrl = prefs.getString(_keyLastHostUrl) ?? 'http://52.90.161.62';
     final name = prefs.getString(_keyLastName) ?? 'Diagrama';
     final cachedJson = prefs.getString('$_keyPrefix$diagramId');
 

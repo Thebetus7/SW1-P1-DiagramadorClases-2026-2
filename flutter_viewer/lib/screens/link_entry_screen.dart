@@ -17,7 +17,7 @@ class LinkEntryScreen extends StatefulWidget {
 
 class _LinkEntryScreenState extends State<LinkEntryScreen> {
   final TextEditingController _urlOrIdController = TextEditingController();
-  final TextEditingController _hostController = TextEditingController(text: 'http://10.0.2.2:8080');
+  final TextEditingController _hostController = TextEditingController(text: 'http://52.90.161.62');
   final LocalStorageService _storageService = LocalStorageService();
 
   List<LinkedDiagram> _linkedDiagrams = [];
@@ -47,7 +47,7 @@ class _LinkEntryScreenState extends State<LinkEntryScreen> {
 
   Future<void> _handleConnect(String input, {String? host}) async {
     final activeHost = host ?? _hostController.text.trim();
-    final fallbackHost = activeHost.isNotEmpty ? activeHost : 'http://10.0.2.2:8080';
+    final fallbackHost = activeHost.isNotEmpty ? activeHost : 'http://52.90.161.62';
 
     await widget.controller.connectWithInput(input, fallbackHost: fallbackHost);
 
@@ -291,7 +291,7 @@ class _LinkEntryScreenState extends State<LinkEntryScreen> {
                 decoration: InputDecoration(
                   labelText: 'Host Backend (API / WebSocket)',
                   labelStyle: TextStyle(color: Colors.white.withValues(alpha: 0.6), fontSize: 11.5),
-                  hintText: 'http://10.0.2.2:8080 (Android) o http://localhost:8080',
+                  hintText: 'http://52.90.161.62 o http://10.0.2.2:8080',
                   hintStyle: TextStyle(color: Colors.white.withValues(alpha: 0.3), fontSize: 11),
                   prefixIcon: const Icon(Icons.dns_rounded, size: 18, color: Color(0xFF94A3B8)),
                   filled: true,

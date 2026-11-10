@@ -48,7 +48,7 @@ class LinkedDiagram {
     return LinkedDiagram(
       diagramId: (json['diagramId'] as num).toInt(),
       name: json['name']?.toString() ?? 'Diagrama UML',
-      hostUrl: json['hostUrl']?.toString() ?? 'http://10.0.2.2:8080',
+      hostUrl: json['hostUrl']?.toString() ?? 'http://52.90.161.62',
       wsEndpoint: json['wsEndpoint']?.toString() ?? '/ws',
       linkedAt: json['linkedAt'] != null
           ? DateTime.tryParse(json['linkedAt'].toString()) ?? DateTime.now()
