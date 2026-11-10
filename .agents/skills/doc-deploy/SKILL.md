@@ -238,9 +238,13 @@ flowchart TD
   - Verificación local previa mediante build de prueba.
 
 ### `02_CREAR_INFRAESTRUCTURA_[CLOUD].md`
-- **Misión:** Provisión de máquinas virtuales, redes y seguridad en el proveedor cloud.
+- **Misión:** Provisión de máquinas virtuales, bases de datos gestionadas, roles de acceso, redes y seguridad en el proveedor cloud.
 - **Componentes Obligatorios:**
   - Guía paso a paso de consola web o CLI del proveedor real (AWS Lightsail/EC2, DigitalOcean Droplet, GCP Compute, VPS, etc.).
+  - **Servicios Administrados y Bases de Datos Cloud:** Instrucciones explícitas de creación previa de servicios cloud requeridos (ej. tablas Amazon DynamoDB con sus claves Hash/Range e índices GSI, buckets S3, o bases de datos administradas) antes de lanzar el servidor.
+  - **Identidad y Acceso (IAM Roles / Service Accounts):** Configuración de roles y perfiles de instancia (ej. IAM Instance Profile con políticas de lectura/escritura) para que los servidores interactúen con los servicios de nube de forma segura sin requerir claves de acceso fijas en archivos de texto.
+  - **Nomenclatura y Validaciones del Proveedor:** Restricciones de nombres impuestas por el proveedor cloud (por ejemplo: en AWS EC2, los Security Groups **no pueden comenzar por el prefijo `sg-`** ya que está reservado para los identificadores automáticos del sistema; usar `secgroup-` o sufijos `-sg`).
+  - **Topología Multicliente y Aislamiento de Red:** Documentar explícitamente qué clientes externos (como apps móviles Flutter, frontend SPA o terceros) consumen la API, cómo resuelven la URL y confirmar que los contenedores del servidor solo orquestan el backend/frontend y aíslan las dependencias locales sin empaquetar clientes móviles.
   - Configuración estricta de Firewall / Security Groups:
     | Puerto | Protocolo | Origen | Servicio | Justificación |
     |:---:|:---:|:---:|:---|:---|
@@ -254,11 +258,11 @@ flowchart TD
 - **Misión:** Aprovisionamiento del sistema operativo del servidor.
 - **Componentes Obligatorios:**
   - Primera conexión SSH con comando exacto y flags recomendados.
-  - Creación de usuario administrador no root (`sudo useradd -m ...`).
-  - Actualización de repositorios y paquetes del sistema (`apt update && apt upgrade -y`).
-  - Instalación oficial de Docker Engine y Docker Compose plugin sin versiones desactualizadas.
-  - Configuración de permisos de usuario (`usermod -aG docker $USER`).
-  - Configuración de memoria Swap de seguridad (para prevenir caídas por Out-Of-Memory en servidores pequeños).
+  - Creación de usuario administrador no root (`sudo useradd -m ...`) o uso del usuario por defecto según la distribución (ej. `ec2-user` en Amazon Linux, `ubuntu` en Ubuntu).
+  - Actualización de repositorios y paquetes del sistema adaptada al gestor de la distribución (`dnf update -y` en Amazon Linux 2023 / RHEL o `apt update && apt upgrade -y` en Debian / Ubuntu).
+  - Instalación oficial de Docker Engine y Docker Compose plugin sin versiones desactualizadas ni métodos obsoletos (`docker-compose` standalone en favor del plugin moderno).
+  - Configuración de permisos de usuario (`usermod -aG docker $USER`) y aplicación de sesión sin desconexión obligatoria (`newgrp docker`).
+  - Configuración mandatoria de memoria Swap de seguridad (mínimo 2 GB) para prevenir caídas por Out-Of-Memory en servidores pequeños durante compilaciones de Java / Node.js.
   - Tabla de verificación con comando y salida esperada para cada herramienta instalada.
 
 ### `04_DESPLEGAR_Y_VERIFICAR.md`
