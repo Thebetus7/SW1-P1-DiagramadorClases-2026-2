@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import '../models/chat_message_model.dart';
 import '../models/diagram_model.dart';
@@ -6,10 +7,10 @@ import '../models/diagram_model.dart';
 class CopilotAiService {
   static const String defaultGeminiApiKey = 'AQ.Ab8RN6I34Oy5bagEnGjof29PIZ-z-DfEAFuB3DXHkfc8qTjX0A';
 
+  // Usar directamente gemini-2.5-flash y gemini-flash-latest
   static const List<String> geminiModels = [
     'gemini-2.5-flash',
-    'gemini-2.5-pro',
-    'gemini-2.5-flash-lite',
+    'gemini-flash-latest',
   ];
 
   /// Envía la instrucción o consulta a Gemini para generar respuesta o mutación del diagrama
@@ -92,7 +93,7 @@ DIRECTIVA ESTRICTA DE COMUNICACIÓN:
             ],
             'generationConfig': {'temperature': 0.4},
           }),
-        ).timeout(const Duration(seconds: 15));
+        ).timeout(const Duration(seconds: 10));
 
         if (res.statusCode == 200) {
           final data = jsonDecode(utf8.decode(res.bodyBytes)) as Map<String, dynamic>;
@@ -103,7 +104,9 @@ DIRECTIVA ESTRICTA DE COMUNICACIÓN:
             return {'replyText': text};
           }
         }
-      } catch (_) {}
+      } catch (e) {
+        debugPrint('Error en modelo $model: $e');
+      }
     }
 
     return {'replyText': 'No se pudo obtener respuesta del modelo en este momento. Inténtalo nuevamente.'};

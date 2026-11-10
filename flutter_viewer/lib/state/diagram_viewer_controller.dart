@@ -315,19 +315,27 @@ class DiagramViewerController extends ChangeNotifier {
     };
 
     try {
-      // 1. Guardar mensaje de usuario en DynamoDB
-      final savedUserMsg = await _apiService.saveChatMessage(_currentHostUrl, diagramId, userMsgMap);
-      _addChatMessage(savedUserMsg);
+      // 1. Guardar mensaje de usuario en DynamoDB (con timeout rápido de 5s para que no bloquee)
+      try {
+        final savedUserMsg = await _apiService
+            .saveChatMessage(_currentHostUrl, diagramId, userMsgMap)
+            .timeout(const Duration(seconds: 5));
+        _addChatMessage(savedUserMsg);
 
-      // Difundir mensaje de usuario por STOMP
-      _stompService.sendMessage(diagramId, {
-        'type': 'CHAT_MESSAGE',
-        'diagramId': diagramId,
-        'userId': 999,
-        'userName': 'Usuario Móvil',
-        'userRole': 'COLABORADOR',
-        'payload': jsonEncode(savedUserMsg.toJson()),
-      }, isChat: true);
+        _stompService.sendMessage(diagramId, {
+          'type': 'CHAT_MESSAGE',
+          'diagramId': diagramId,
+          'userId': 999,
+          'userName': 'Usuario Móvil',
+          'userRole': 'COLABORADOR',
+          'payload': jsonEncode(savedUserMsg.toJson()),
+        }, isChat: true);
+      } catch (saveErr) {
+        debugPrint('Aviso: guardando mensaje localmente mientras se persiste en segundo plano: $saveErr');
+        // Si la red o DynamoDB demora, mostrar el mensaje de usuario de inmediato en la UI
+        final localUserMsg = ChatMessageModel.fromJson(userMsgMap);
+        _addChatMessage(localUserMsg);
+      }
 
       // 2. Invocar Copilot AI con Gemini
       final aiResponse = await _copilotAiService.chatWithGemini(
@@ -344,6 +352,7 @@ class DiagramViewerController extends ChangeNotifier {
 
       // 3. Crear mensaje de respuesta del Copilot
       final copilotMsgMap = {
+        'id': 'copilot-${DateTime.now().millisecondsSinceEpoch}',
         'diagramId': diagramId,
         'senderType': 'COPILOT',
         'userName': 'Copilot IA',
@@ -356,18 +365,25 @@ class DiagramViewerController extends ChangeNotifier {
         'createdAt': DateTime.now().toUtc().toIso8601String(),
       };
 
-      final savedCopilotMsg = await _apiService.saveChatMessage(_currentHostUrl, diagramId, copilotMsgMap);
-      _addChatMessage(savedCopilotMsg);
+      try {
+        final savedCopilotMsg = await _apiService
+            .saveChatMessage(_currentHostUrl, diagramId, copilotMsgMap)
+            .timeout(const Duration(seconds: 5));
+        _addChatMessage(savedCopilotMsg);
 
-      // Difundir respuesta del Copilot por STOMP
-      _stompService.sendMessage(diagramId, {
-        'type': 'CHAT_MESSAGE',
-        'diagramId': diagramId,
-        'userId': 0,
-        'userName': 'Copilot IA',
-        'userRole': 'SISTEMA',
-        'payload': jsonEncode(savedCopilotMsg.toJson()),
-      }, isChat: true);
+        _stompService.sendMessage(diagramId, {
+          'type': 'CHAT_MESSAGE',
+          'diagramId': diagramId,
+          'userId': 0,
+          'userName': 'Copilot IA',
+          'userRole': 'SISTEMA',
+          'payload': jsonEncode(savedCopilotMsg.toJson()),
+        }, isChat: true);
+      } catch (saveCopilotErr) {
+        debugPrint('Aviso persistiendo Copilot en backend: $saveCopilotErr');
+        final localCopilotMsg = ChatMessageModel.fromJson(copilotMsgMap);
+        _addChatMessage(localCopilotMsg);
+      }
 
     } catch (e) {
       _showToast('Error al consultar Copilot: $e');
