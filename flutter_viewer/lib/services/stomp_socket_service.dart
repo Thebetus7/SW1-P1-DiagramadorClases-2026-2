@@ -73,6 +73,24 @@ class StompSocketService {
     _client?.activate();
   }
 
+  /// Envía un mensaje a través del broker STOMP hacia /app/diagram/{id}/chat o sync
+  void sendMessage(int diagramId, Map<String, dynamic> message, {bool isChat = false}) {
+    if (_client == null || !_isConnected) {
+      debugPrint('No se puede enviar mensaje STOMP: socket desconectado');
+      return;
+    }
+
+    final destination = isChat ? '/app/diagram/$diagramId/chat' : '/app/diagram/$diagramId/sync';
+    try {
+      _client?.send(
+        destination: destination,
+        body: jsonEncode(message),
+      );
+    } catch (e) {
+      debugPrint('Error enviando frame STOMP a $destination: $e');
+    }
+  }
+
   void disconnect() {
     _client?.deactivate();
     _client = null;

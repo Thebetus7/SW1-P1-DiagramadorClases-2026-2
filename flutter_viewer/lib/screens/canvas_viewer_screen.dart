@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import '../state/diagram_viewer_controller.dart';
+import '../widgets/canvas_copilot_bubble.dart';
+import '../widgets/canvas_copilot_drawer.dart';
 import '../widgets/collaborator_toast.dart';
 import '../widgets/connection_status_banner.dart';
 import '../widgets/mobile_canvas_painter.dart';
@@ -55,6 +57,18 @@ class _CanvasViewerScreenState extends State<CanvasViewerScreen> {
         Navigator.pop(context);
       }
     }
+  }
+
+  void _openCopilotDrawer() {
+    widget.controller.toggleCopilotDrawer();
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) => CanvasCopilotDrawer(controller: widget.controller),
+    ).whenComplete(() {
+      widget.controller.closeCopilotDrawer();
+    });
   }
 
   @override
@@ -194,6 +208,15 @@ class _CanvasViewerScreenState extends State<CanvasViewerScreen> {
 
                     // Toast flotante animado de colaboradores
                     CollaboratorToast(message: widget.controller.recentToastMessage),
+
+                    // Burbuja flotante interactiva de Copilot IA (idéntica al frontend web)
+                    if (data != null)
+                      CanvasCopilotBubble(
+                        isOpen: widget.controller.isCopilotDrawerOpen,
+                        onToggle: _openCopilotDrawer,
+                        unreadCount: widget.controller.unreadCount,
+                        isThinking: widget.controller.isCopilotLoading || widget.controller.applyingProposalId != null,
+                      ),
                   ],
                 ),
               ),

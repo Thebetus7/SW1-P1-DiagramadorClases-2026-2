@@ -1,8 +1,10 @@
 import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
+import '../models/chat_message_model.dart';
 import '../models/diagram_model.dart';
 import '../models/linked_diagram.dart';
+import '../services/copilot_ai_service.dart';
 import '../services/diagram_api_service.dart';
 import '../services/local_storage_service.dart';
 import '../services/stomp_socket_service.dart';
@@ -19,6 +21,7 @@ class DiagramViewerController extends ChangeNotifier {
   final DiagramApiService _apiService = DiagramApiService();
   final StompSocketService _stompService = StompSocketService();
   final LocalStorageService _storageService = LocalStorageService();
+  final CopilotAiService _copilotAiService = CopilotAiService();
 
   ViewerConnectionState _connectionState = ViewerConnectionState.disconnected;
   DiagramCanvasData? _diagramData;
@@ -29,6 +32,13 @@ class DiagramViewerController extends ChangeNotifier {
   int? _currentDiagramId;
   String _currentHostUrl = 'http://52.90.161.62';
 
+  // --- Estado de Copilot IA y Chat ---
+  final List<ChatMessageModel> _chatMessages = [];
+  bool _isCopilotLoading = false;
+  bool _isCopilotDrawerOpen = false;
+  int _unreadCount = 0;
+  String? _applyingProposalId;
+
   ViewerConnectionState get connectionState => _connectionState;
   DiagramCanvasData? get diagramData => _diagramData;
   String? get errorMessage => _errorMessage;
@@ -36,12 +46,32 @@ class DiagramViewerController extends ChangeNotifier {
   int? get currentDiagramId => _currentDiagramId;
   String get currentHostUrl => _currentHostUrl;
 
+  List<ChatMessageModel> get chatMessages => List.unmodifiable(_chatMessages);
+  bool get isCopilotLoading => _isCopilotLoading;
+  bool get isCopilotDrawerOpen => _isCopilotDrawerOpen;
+  int get unreadCount => _unreadCount;
+  String? get applyingProposalId => _applyingProposalId;
+
   bool get isOnline => _connectionState == ViewerConnectionState.onlineSynced;
   bool get isOffline => _connectionState == ViewerConnectionState.offlineCached;
 
+  void toggleCopilotDrawer() {
+    _isCopilotDrawerOpen = !_isCopilotDrawerOpen;
+    if (_isCopilotDrawerOpen) {
+      _unreadCount = 0;
+    }
+    notifyListeners();
+  }
+
+  void closeCopilotDrawer() {
+    if (_isCopilotDrawerOpen) {
+      _isCopilotDrawerOpen = false;
+      notifyListeners();
+    }
+  }
+
   /// Inicia el flujo de conexión a partir de una URL escaneada o un ID numérico
   Future<void> connectWithInput(String input, {String fallbackHost = 'http://52.90.161.62'}) async {
-    // 1. Sanitizar comillas simples, dobles o barras accidentales al inicio/fin
     final cleaned = input.trim().replaceAll(RegExp(r"""^['"/]+|['"/]+$"""), '').trim();
     if (cleaned.isEmpty) {
       _errorMessage = 'Por favor ingresa una URL válida o el ID del diagrama.';
@@ -56,7 +86,6 @@ class DiagramViewerController extends ChangeNotifier {
       hostUrl = 'http://52.90.161.62';
     }
 
-    // 2. Extraer ID del diagrama mediante Regex (/diagrams/20 o ?id=20 o número directo)
     final matchDiagrams = RegExp(r'/diagrams/(\d+)').firstMatch(cleaned);
     if (matchDiagrams != null) {
       diagramId = int.tryParse(matchDiagrams.group(1)!);
@@ -67,10 +96,8 @@ class DiagramViewerController extends ChangeNotifier {
       }
     }
 
-    // Si aún no se encontró, probar si el input completo es un número de ID
     diagramId ??= int.tryParse(cleaned);
 
-    // 3. Determinar el Host del Backend inteligentemente (Local vs Producción Online)
     final isPureNumber = RegExp(r'^\d+$').hasMatch(cleaned);
     if (!isPureNumber) {
       try {
@@ -85,11 +112,8 @@ class DiagramViewerController extends ChangeNotifier {
           final isLocalHost = host == 'localhost' || host == '127.0.0.1';
 
           if (isLocalHost) {
-            // En entorno local (emulador Android), usar el fallbackHost configurado (ej: http://10.0.2.2:8080)
-            // para no apuntar erróneamente al puerto del frontend (3000) ni al loopback del teléfono
             hostUrl = fallbackHost;
           } else {
-            // En entorno online / producción, el backend suele estar bajo el mismo dominio (vía Nginx)
             final portPart = uri.hasPort ? ':${uri.port}' : '';
             hostUrl = '${uri.scheme}://${uri.host}$portPart';
           }
@@ -109,14 +133,13 @@ class DiagramViewerController extends ChangeNotifier {
     await loadDiagram(diagramId, hostUrl);
   }
 
-  /// Carga el diagrama mediante REST, inicializa el socket STOMP y guarda en caché
+  /// Carga el diagrama mediante REST, inicializa el socket STOMP y carga el historial de chat
   Future<void> loadDiagram(int diagramId, String hostUrl) async {
     _connectionState = ViewerConnectionState.connecting;
     _errorMessage = null;
     notifyListeners();
 
     try {
-      // 1. Intentar consulta REST inicial
       final response = await _apiService.fetchDiagram(hostUrl, diagramId);
       final name = response['nombre']?.toString() ?? 'Diagrama #$diagramId';
       final lienzoStr = response['lienzo']?.toString() ?? '{}';
@@ -125,7 +148,6 @@ class DiagramViewerController extends ChangeNotifier {
       _diagramData = DiagramCanvasData.fromJson(lienzoJson, name);
       _connectionState = ViewerConnectionState.onlineSynced;
 
-      // 2. Guardar en almacenamiento local persistente (multi-lienzo)
       await _storageService.saveDiagramJson(diagramId, name, lienzoStr);
       await _storageService.saveLinkedDiagram(LinkedDiagram(
         diagramId: diagramId,
@@ -136,12 +158,13 @@ class DiagramViewerController extends ChangeNotifier {
         lastAccessedAt: DateTime.now(),
       ));
 
-      // 3. Conectar STOMP WebSockets
       _initStompConnection(diagramId, hostUrl);
+
+      // Cargar historial de chat desde DynamoDB
+      _loadChatHistory(diagramId, hostUrl);
     } catch (e) {
       debugPrint('Fallo al consultar API REST, intentando caché offline: $e');
 
-      // Intentar cargar desde caché local
       final cachedJson = await _storageService.getCachedDiagramJson(diagramId);
       if (cachedJson != null && cachedJson.isNotEmpty) {
         try {
@@ -159,6 +182,17 @@ class DiagramViewerController extends ChangeNotifier {
     }
 
     notifyListeners();
+  }
+
+  Future<void> _loadChatHistory(int diagramId, String hostUrl) async {
+    try {
+      final history = await _apiService.fetchChatHistory(hostUrl, diagramId);
+      _chatMessages.clear();
+      _chatMessages.addAll(history);
+      notifyListeners();
+    } catch (e) {
+      debugPrint('Error cargando historial de chat en móvil: $e');
+    }
   }
 
   void _initStompConnection(int diagramId, String hostUrl) {
@@ -211,6 +245,268 @@ class DiagramViewerController extends ChangeNotifier {
           debugPrint('Error parseando SYNC_CANVAS en móvil: $e');
         }
       }
+    } else if (type == 'CHAT_MESSAGE') {
+      final payloadStr = message['payload']?.toString();
+      if (payloadStr != null && payloadStr.isNotEmpty) {
+        try {
+          final payload = jsonDecode(payloadStr) as Map<String, dynamic>;
+          final chatMsg = ChatMessageModel.fromJson(payload);
+          _addChatMessage(chatMsg);
+        } catch (e) {
+          debugPrint('Error parseando CHAT_MESSAGE en móvil: $e');
+        }
+      }
+    } else if (type == 'PROPOSAL_RESOLVED') {
+      final payloadStr = message['payload']?.toString();
+      if (payloadStr != null && payloadStr.isNotEmpty) {
+        try {
+          final payload = jsonDecode(payloadStr) as Map<String, dynamic>;
+          final messageId = payload['messageId']?.toString();
+          final status = payload['status']?.toString();
+          final resolvedBy = payload['resolvedByUserName']?.toString() ?? 'Colaborador';
+
+          if (messageId != null && status != null) {
+            final idx = _chatMessages.indexWhere((m) => m.id == messageId);
+            if (idx != -1) {
+              _chatMessages[idx] = _chatMessages[idx].copyWith(
+                proposalStatus: status,
+                resolvedByUserName: resolvedBy,
+              );
+              _showToast('$resolvedBy ${status == 'ACCEPTED' ? 'aceptó' : 'ignoró'} una propuesta');
+              notifyListeners();
+            }
+          }
+        } catch (e) {
+          debugPrint('Error parseando PROPOSAL_RESOLVED en móvil: $e');
+        }
+      }
+    }
+  }
+
+  void _addChatMessage(ChatMessageModel message) {
+    final exists = _chatMessages.any((m) => m.id == message.id && m.id.isNotEmpty);
+    if (!exists) {
+      _chatMessages.add(message);
+      if (!_isCopilotDrawerOpen) {
+        _unreadCount++;
+      }
+      notifyListeners();
+    }
+  }
+
+  // --- Enviar Mensaje a Copilot (Modo Chat o Modo Editor) ---
+  Future<void> sendCopilotMessage(String text, String mode) async {
+    final diagramId = _currentDiagramId;
+    if (diagramId == null || text.trim().isEmpty) return;
+
+    _isCopilotLoading = true;
+    notifyListeners();
+
+    final userMsgMap = {
+      'diagramId': diagramId,
+      'senderType': 'USER',
+      'userName': 'Usuario Móvil',
+      'userId': 999,
+      'mode': mode,
+      'messageType': 'CHAT_MESSAGE',
+      'content': text.trim(),
+      'isError': false,
+      'createdAt': DateTime.now().toUtc().toIso8601String(),
+    };
+
+    try {
+      // 1. Guardar mensaje de usuario en DynamoDB
+      final savedUserMsg = await _apiService.saveChatMessage(_currentHostUrl, diagramId, userMsgMap);
+      _addChatMessage(savedUserMsg);
+
+      // Difundir mensaje de usuario por STOMP
+      _stompService.sendMessage(diagramId, {
+        'type': 'CHAT_MESSAGE',
+        'diagramId': diagramId,
+        'userId': 999,
+        'userName': 'Usuario Móvil',
+        'userRole': 'COLABORADOR',
+        'payload': jsonEncode(savedUserMsg.toJson()),
+      }, isChat: true);
+
+      // 2. Invocar Copilot AI con Gemini
+      final aiResponse = await _copilotAiService.chatWithGemini(
+        userText: text.trim(),
+        mode: mode,
+        currentNodes: _diagramData?.nodes ?? [],
+        currentEdges: _diagramData?.edges ?? [],
+        diagramName: _diagramData?.diagramName ?? 'Diagrama',
+        chatHistory: _chatMessages,
+      );
+
+      final replyText = aiResponse['replyText']?.toString() ?? 'He procesado tu solicitud.';
+      final proposal = aiResponse['proposal'] as Map<String, dynamic>?;
+
+      // 3. Crear mensaje de respuesta del Copilot
+      final copilotMsgMap = {
+        'diagramId': diagramId,
+        'senderType': 'COPILOT',
+        'userName': 'Copilot IA',
+        'mode': mode,
+        'messageType': proposal != null ? 'EDITOR_PROPOSAL' : 'CHAT_MESSAGE',
+        'content': replyText,
+        'proposalJson': proposal != null ? jsonEncode(proposal) : null,
+        'proposalStatus': proposal != null ? 'PENDING' : null,
+        'isError': false,
+        'createdAt': DateTime.now().toUtc().toIso8601String(),
+      };
+
+      final savedCopilotMsg = await _apiService.saveChatMessage(_currentHostUrl, diagramId, copilotMsgMap);
+      _addChatMessage(savedCopilotMsg);
+
+      // Difundir respuesta del Copilot por STOMP
+      _stompService.sendMessage(diagramId, {
+        'type': 'CHAT_MESSAGE',
+        'diagramId': diagramId,
+        'userId': 0,
+        'userName': 'Copilot IA',
+        'userRole': 'SISTEMA',
+        'payload': jsonEncode(savedCopilotMsg.toJson()),
+      }, isChat: true);
+
+    } catch (e) {
+      _showToast('Error al consultar Copilot: $e');
+    } finally {
+      _isCopilotLoading = false;
+      notifyListeners();
+    }
+  }
+
+  // --- Aceptar Propuesta de Edición y Mutar el Lienzo en Vivo ---
+  Future<void> acceptProposal(ChatMessageModel message) async {
+    final diagramId = _currentDiagramId;
+    final proposal = message.parsedProposal;
+    if (diagramId == null || proposal == null) return;
+
+    _applyingProposalId = message.id;
+    notifyListeners();
+
+    try {
+      // 1. Extraer nodos y aristas de la propuesta generada
+      final List<dynamic> nextNodesRaw = proposal['nodesDelta'] as List<dynamic>? ?? [];
+      final List<dynamic> nextEdgesRaw = proposal['edgesDelta'] as List<dynamic>? ?? [];
+
+      if (nextNodesRaw.isNotEmpty) {
+        final newCanvasData = DiagramCanvasData.fromJson({
+          'nodes': nextNodesRaw,
+          'edges': nextEdgesRaw,
+        }, _diagramData?.diagramName ?? 'Diagrama');
+
+        _diagramData = newCanvasData;
+
+        final lienzoPayload = jsonEncode({
+          'nodes': nextNodesRaw,
+          'edges': nextEdgesRaw,
+        });
+
+        // 2. Persistir lienzo en PostgreSQL vía API REST
+        await _apiService.updateDiagramLienzo(
+          baseUrl: _currentHostUrl,
+          diagramId: diagramId,
+          lienzoJson: lienzoPayload,
+          userId: 999,
+        );
+
+        // 3. Difundir nuevo lienzo a todos los clientes web vía STOMP (SYNC_CANVAS)
+        _stompService.sendMessage(diagramId, {
+          'type': 'SYNC_CANVAS',
+          'diagramId': diagramId,
+          'userId': 999,
+          'userName': 'Usuario Móvil (Copilot)',
+          'userRole': 'COLABORADOR',
+          'payload': lienzoPayload,
+        });
+
+        // Guardar en caché local móvil
+        await _storageService.saveDiagramJson(diagramId, newCanvasData.diagramName, lienzoPayload);
+      }
+
+      // 4. Resolver propuesta como ACCEPTED en DynamoDB
+      await _apiService.resolveProposal(
+        baseUrl: _currentHostUrl,
+        diagramId: diagramId,
+        messageId: message.id,
+        status: 'ACCEPTED',
+        userId: 999,
+        userName: 'Usuario Móvil',
+      );
+
+      // Actualizar estado en lista local
+      final idx = _chatMessages.indexWhere((m) => m.id == message.id);
+      if (idx != -1) {
+        _chatMessages[idx] = _chatMessages[idx].copyWith(
+          proposalStatus: 'ACCEPTED',
+          resolvedByUserName: 'Usuario Móvil',
+        );
+      }
+
+      // 5. Difundir resolución por STOMP
+      _stompService.sendMessage(diagramId, {
+        'type': 'PROPOSAL_RESOLVED',
+        'diagramId': diagramId,
+        'userId': 999,
+        'userName': 'Usuario Móvil',
+        'userRole': 'COLABORADOR',
+        'payload': jsonEncode({
+          'messageId': message.id,
+          'status': 'ACCEPTED',
+          'resolvedByUserName': 'Usuario Móvil',
+        }),
+      }, isChat: true);
+
+      _showToast('Propuesta de Copilot aplicada al lienzo exitosamente.');
+    } catch (e) {
+      _showToast('Error al aplicar propuesta: $e');
+    } finally {
+      _applyingProposalId = null;
+      notifyListeners();
+    }
+  }
+
+  // --- Ignorar Propuesta ---
+  Future<void> ignoreProposal(ChatMessageModel message) async {
+    final diagramId = _currentDiagramId;
+    if (diagramId == null) return;
+
+    try {
+      await _apiService.resolveProposal(
+        baseUrl: _currentHostUrl,
+        diagramId: diagramId,
+        messageId: message.id,
+        status: 'IGNORED',
+        userId: 999,
+        userName: 'Usuario Móvil',
+      );
+
+      final idx = _chatMessages.indexWhere((m) => m.id == message.id);
+      if (idx != -1) {
+        _chatMessages[idx] = _chatMessages[idx].copyWith(
+          proposalStatus: 'IGNORED',
+          resolvedByUserName: 'Usuario Móvil',
+        );
+      }
+
+      _stompService.sendMessage(diagramId, {
+        'type': 'PROPOSAL_RESOLVED',
+        'diagramId': diagramId,
+        'userId': 999,
+        'userName': 'Usuario Móvil',
+        'userRole': 'COLABORADOR',
+        'payload': jsonEncode({
+          'messageId': message.id,
+          'status': 'IGNORED',
+          'resolvedByUserName': 'Usuario Móvil',
+        }),
+      }, isChat: true);
+
+      notifyListeners();
+    } catch (e) {
+      _showToast('Error al descartar propuesta: $e');
     }
   }
 
@@ -239,6 +535,10 @@ class DiagramViewerController extends ChangeNotifier {
     _diagramData = null;
     _currentDiagramId = null;
     _recentToastMessage = null;
+    _chatMessages.clear();
+    _isCopilotDrawerOpen = false;
+    _unreadCount = 0;
+
     if (removePermanently && diagramId != null) {
       await _storageService.removeLinkedDiagram(diagramId);
     } else {
