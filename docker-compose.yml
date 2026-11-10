@@ -21,24 +21,6 @@ services:
       retries: 5
 
   # ==========================================================
-  # 1.1 Almacenamiento de Objetos S3 Compatible (MinIO Oficial)
-  # ==========================================================
-  minio:
-    image: quay.io/minio/minio:latest
-    container_name: diag_minio
-    restart: always
-    command: server /data --console-address ":9001"
-    ports:
-      - "127.0.0.1:9000:9000"
-    environment:
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
-    volumes:
-      - minio_data:/data
-    networks:
-      - diag_network
-
-  # ==========================================================
   # 2. Backend: Spring Boot + Java 17 + AWS SDK DynamoDB
   # ==========================================================
   backend:
@@ -50,21 +32,15 @@ services:
     depends_on:
       postgres_db:
         condition: service_healthy
-      minio:
-        condition: service_started
     environment:
       SPRING_DATASOURCE_URL: jdbc:postgresql://postgres_db:5432/sw1_diag_clases_2026_2
       SPRING_DATASOURCE_USERNAME: postgres
       SPRING_DATASOURCE_PASSWORD: ${DB_PASSWORD:-password123}
-      # Conexión directa a AWS DynamoDB administrado (vía IAM Role o variables)
+      # Conexión directa a AWS DynamoDB administrado (vía IAM Role)
       DYNAMODB_ENDPOINT: ${DYNAMODB_ENDPOINT:-}
       AWS_REGION: ${AWS_REGION:-us-east-1}
       AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
       AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
-      MINIO_ENDPOINT: http://minio:9000
-      MINIO_ACCESS_KEY: ${MINIO_ROOT_USER:-minioadmin}
-      MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin}
-      MINIO_BUCKET_NAME: ${MINIO_BUCKET_NAME:-sw1-diagramador-assets}
       SPRING_JPA_HIBERNATE_DDL_AUTO: update
       SPRING_JPA_SHOW_SQL: "false"
     networks:
@@ -105,14 +81,10 @@ services:
     networks:
       - diag_network
 
-# Red interna privada compartida entre los contenedores
 networks:
   diag_network:
     driver: bridge
 
-# Volumen persistente para que la base de datos no pierda información
 volumes:
   postgres_data:
-    driver: local
-  minio_data:
     driver: local
