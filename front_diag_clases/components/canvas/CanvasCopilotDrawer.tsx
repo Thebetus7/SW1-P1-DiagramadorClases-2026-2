@@ -246,6 +246,8 @@ export function CanvasCopilotDrawer({
       setIsCompressing(true);
       const compressed = await compressImageToJpeg(file, 1280, 0.8);
       setAttachedImage(compressed);
+      // Conmutar a modo EDITOR automáticamente para generar propuestas interactivas de diagrama (Spec 07)
+      setMode("EDITOR");
     } catch (err: any) {
       setImageError(err.message || "Error al procesar y comprimir la imagen.");
     } finally {
@@ -298,7 +300,7 @@ export function CanvasCopilotDrawer({
 
     isSendingRef.current = true;
     const imgToSend = attachedImage;
-    const textToSend = text || "Analiza la imagen adjunta";
+    const textToSend = text || "Analiza la imagen adjunta e incorpora las clases y relaciones al diagrama";
     setInputText("");
     setAttachedImage(null);
     try {

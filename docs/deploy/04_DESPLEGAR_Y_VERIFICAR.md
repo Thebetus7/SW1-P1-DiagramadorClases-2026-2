@@ -16,9 +16,9 @@ Este documento detalla la clonación del proyecto en el servidor Amazon Linux 20
 > **Ruta de Trabajo:** `/home/ec2-user`
 
 ```bash
-# [SSH / SERVIDOR] Clonar el repositorio
+# [SSH / SERVIDOR] Clonar el repositorio (rama específica main-parcial2)
 cd /home/ec2-user
-git clone https://github.com/<TU_USUARIO>/<TU_REPOSITORIO>.git app_diagramador
+git clone -b main-parcial2 https://github.com/Thebetus7/SW1-P1-DiagramadorClases-2026-2.git app_diagramador
 
 # Ingresar al directorio del proyecto
 cd app_diagramador

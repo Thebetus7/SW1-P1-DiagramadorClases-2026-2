@@ -55,6 +55,7 @@ import {
   generateProactiveSuggestion,
   processDiagramWithGemini,
   convertImageToDiagramWithGemini,
+  applyMultimodalMergeLayout,
 } from "@/services/geminiDiagramService";
 import { chatWithLocalLlm } from "@/services/webLlmDiagramService";
 import { ChatMessage, ChatProposalPayload, CopilotMode, AiEngineConfig } from "@/types";
@@ -596,10 +597,18 @@ function DiagramEditorContent() {
     if (!diagramId) return;
     fetchChatHistory(diagramId)
       .then((history) => {
-        // Deduplicar historial por ID antes de setearlo en el estado
+        // Deduplicar historial por ID e hidratar propuesta desde proposalJson si es necesario
         const uniqueHistory: ChatMessage[] = [];
         const seenIds = new Set<string>();
-        for (const item of history || []) {
+        for (const rawItem of history || []) {
+          const item = { ...rawItem };
+          if (!item.proposal && item.proposalJson) {
+            try {
+              item.proposal = JSON.parse(item.proposalJson);
+            } catch (pErr) {
+              console.warn("Aviso: No se pudo deserializar proposalJson:", pErr);
+            }
+          }
           if (item.id) {
             if (!seenIds.has(item.id)) {
               seenIds.add(item.id);
@@ -1518,12 +1527,20 @@ function DiagramEditorContent() {
       let nextEdges: Edge[] = [];
       let appliedExplanation = "";
 
+      const originalMsg = copilotMessages.find((m) => m.id === messageId);
+      let effectiveProposal = proposal || originalMsg?.proposal;
+      if (!effectiveProposal && originalMsg?.proposalJson) {
+        try {
+          effectiveProposal = JSON.parse(originalMsg.proposalJson);
+        } catch {}
+      }
+
       // Caso A: La propuesta ya traía deltas de nodos precalculados
-      if (proposal?.nodesDelta && proposal.nodesDelta.length > 0) {
+      if (effectiveProposal?.nodesDelta && effectiveProposal.nodesDelta.length > 0) {
         const existingNodeIds = new Set(nodes.map((n) => n.id));
 
-        nextNodes = proposal.nodesDelta.map((node: any) => {
-          const isAffected = !existingNodeIds.has(node.id) || proposal.affectedNodeIds?.includes(node.id);
+        nextNodes = effectiveProposal.nodesDelta.map((node: any) => {
+          const isAffected = !existingNodeIds.has(node.id) || effectiveProposal?.affectedNodeIds?.includes(node.id);
           return {
             ...node,
             data: {
@@ -1534,13 +1551,12 @@ function DiagramEditorContent() {
           };
         });
 
-        nextEdges = proposal.edgesDelta || edges;
-        appliedExplanation = proposal.summary || "Cambios propuestos aplicados al lienzo.";
+        nextEdges = effectiveProposal.edgesDelta || edges;
+        appliedExplanation = effectiveProposal.summary || "Cambios propuestos aplicados al lienzo.";
       } else {
         // Caso B: La propuesta no traía delta (ej: sugerencia proactiva textual).
         // Extraemos la instrucción y calculamos la mutación en vivo con Gemini.
-        const originalMsg = copilotMessages.find((m) => m.id === messageId);
-        let instruction = proposal?.summary || "";
+        let instruction = effectiveProposal?.summary || "";
         if (!instruction && originalMsg?.content) {
           // Remover prefijo "@NombreUsuario:" si existe
           instruction = originalMsg.content.replace(/^@[^:]+:\s*/, "").trim();
@@ -1775,80 +1791,36 @@ function DiagramEditorContent() {
             onEdit: n.type === "umlNote" ? handleOpenEditNote : handleOpenEditClass,
           },
         }));
-        const nextEdges = result.edges.map((e) => ({
-          ...e,
-          type: e.type || "umlEdge",
-        }));
+        const nextEdges = result.edges.map((e) => {
+          const isAssoc =
+            e.type === "umlAssociationClassEdge" ||
+            (e.data as any)?.relationType === "ASSOCIATION_CLASS" ||
+            Boolean((e.data as any)?.isAssociationClass || (e.data as any)?.targetEdgeId);
+          return {
+            ...e,
+            type: isAssoc ? "umlAssociationClassEdge" : (e.type || "umlEdge"),
+          };
+        });
         setNodes(nextNodes);
         setEdges(nextEdges);
         broadcastCanvas(nextNodes, nextEdges);
         setToastMessage(`Lienzo reemplazado con éxito (${nextNodes.length} clases importadas)`);
       } else {
-        // Modo MERGE: Cálculo armónico de layout espacial para evitar solapamientos
-        let maxX = 0;
-        let minY = Infinity;
-        if (nodes.length > 0) {
-          for (const n of nodes) {
-            const nodeWidth = (n.measured?.width ?? (n as any).width ?? 220);
-            const rightEdge = n.position.x + nodeWidth;
-            if (rightEdge > maxX) maxX = rightEdge;
-            if (n.position.y < minY) minY = n.position.y;
-          }
-        }
-        if (minY === Infinity) minY = 100;
+        // Modo MERGE: Cálculo armónico de layout espacial y preservación de relaciones / clases de asociación en 'T'
+        const layoutMerged = applyMultimodalMergeLayout(nodes, edges, result.nodes, result.edges);
 
-        let importMinX = Infinity;
-        let importMinY = Infinity;
-        for (const n of result.nodes) {
-          if (n.position.x < importMinX) importMinX = n.position.x;
-          if (n.position.y < importMinY) importMinY = n.position.y;
-        }
-        if (importMinX === Infinity) importMinX = 0;
-        if (importMinY === Infinity) importMinY = 0;
+        const nextNodes = layoutMerged.nodes.map((n) => ({
+          ...n,
+          data: {
+            ...n.data,
+            onEdit: n.type === "umlNote" ? handleOpenEditNote : handleOpenEditClass,
+          },
+        }));
 
-        const offsetX = (maxX > 0 ? maxX + 120 : 100) - importMinX;
-        const offsetY = (minY > 0 ? minY : 100) - importMinY;
-
-        const timestamp = Date.now();
-        const idMap = new Map<string, string>();
-
-        const remappedNodes = result.nodes.map((n, idx) => {
-          const newId = `imported-${timestamp}-${idx}`;
-          idMap.set(n.id, newId);
-          return {
-            ...n,
-            id: newId,
-            position: {
-              x: Math.round(n.position.x + offsetX),
-              y: Math.round(n.position.y + offsetY),
-            },
-            data: {
-              ...n.data,
-              onEdit: n.type === "umlNote" ? handleOpenEditNote : handleOpenEditClass,
-            },
-          };
-        });
-
-        const remappedEdges = result.edges.map((e, idx) => {
-          const newSource = idMap.get(e.source) || e.source;
-          const newTarget = idMap.get(e.target) || e.target;
-          const newEdgeId = `imported-edge-${timestamp}-${idx}`;
-          return {
-            ...e,
-            id: newEdgeId,
-            source: newSource,
-            target: newTarget,
-            type: e.type || "umlEdge",
-          };
-        });
-
-        const mergedNodes = [...nodes, ...remappedNodes];
-        const mergedEdges = [...edges, ...remappedEdges];
-
-        setNodes(mergedNodes);
-        setEdges(mergedEdges);
-        broadcastCanvas(mergedNodes, mergedEdges);
-        setToastMessage(`Diagrama fusionado con éxito (+${remappedNodes.length} clases agregadas)`);
+        setNodes(nextNodes);
+        setEdges(layoutMerged.edges);
+        broadcastCanvas(nextNodes, layoutMerged.edges);
+        setToastMessage(`Diagrama fusionado con éxito (${result.nodes.length} clases procesadas)`);
       }
     } catch (err: any) {
       console.error("Error al importar imagen en lienzo:", err);

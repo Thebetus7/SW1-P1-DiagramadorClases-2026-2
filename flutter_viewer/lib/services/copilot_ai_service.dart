@@ -1,11 +1,12 @@
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
+import '../config/secrets.dart';
 import '../models/chat_message_model.dart';
 import '../models/diagram_model.dart';
 
 class CopilotAiService {
-  static const String defaultGeminiApiKey = 'AQ.Ab8RN6I34Oy5bagEnGjof29PIZ-z-DfEAFuB3DXHkfc8qTjX0A';
+  static const String defaultGeminiApiKey = AiConfig.defaultGeminiApiKey;
 
   // Usar directamente gemini-2.5-flash y gemini-flash-latest
   static const List<String> geminiModels = [

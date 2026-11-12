@@ -18,7 +18,10 @@ import software.amazon.awssdk.services.dynamodb.model.ResourceNotFoundException;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CopyOnWriteArrayList;
 
 @Repository
 @Slf4j
@@ -26,6 +29,10 @@ public class ChatMessageDynamoRepository {
 
     private final DynamoDbTable<ChatMessageDynamoItem> chatTable;
     private volatile boolean tableEnsured = false;
+
+    // Resiliencia local: almacén en memoria para cuando DynamoDB no esté corriendo en local (localhost:8005)
+    private final Map<String, ChatMessageDynamoItem> inMemoryCache = new ConcurrentHashMap<>();
+    private final Map<Long, List<ChatMessageDynamoItem>> inMemoryDiagramMessages = new ConcurrentHashMap<>();
 
     public ChatMessageDynamoRepository(DynamoDbTable<ChatMessageDynamoItem> chatTable) {
         this.chatTable = chatTable;
@@ -60,13 +67,46 @@ public class ChatMessageDynamoRepository {
     }
 
     public ChatMessageDynamoItem save(ChatMessageDynamoItem item) {
+        if (item == null) return null;
+
+        // Persistir siempre en el buffer en memoria (resiliencia y fallback transparente)
+        if (item.getId() != null) {
+            inMemoryCache.put(item.getId(), item);
+        }
+        if (item.getDiagramId() != null) {
+            List<ChatMessageDynamoItem> list = inMemoryDiagramMessages.computeIfAbsent(
+                    item.getDiagramId(), k -> new CopyOnWriteArrayList<>()
+            );
+            // Actualizar si ya existe el mensaje con el mismo id, o agregarlo al final
+            boolean updated = false;
+            for (int i = 0; i < list.size(); i++) {
+                if (list.get(i).getId() != null && list.get(i).getId().equals(item.getId())) {
+                    list.set(i, item);
+                    updated = true;
+                    break;
+                }
+            }
+            if (!updated) {
+                list.add(item);
+            }
+        }
+
+        // Intentar persistir en DynamoDB (producción AWS o contenedor local 8005)
         try {
             chatTable.putItem(item);
         } catch (ResourceNotFoundException e) {
             log.warn("Tabla DynamoDB {} no encontrada al guardar. Intentando crearla automáticamente...", chatTable.tableName());
             ensureTableExists();
-            chatTable.putItem(item);
+            try {
+                chatTable.putItem(item);
+            } catch (Exception ex) {
+                log.warn("Aviso: No se pudo persistir en DynamoDB tras crear tabla (operando en modo local in-memory): {}", ex.getMessage());
+            }
+        } catch (Exception e) {
+            log.warn("Aviso: DynamoDB no disponible ({}: {}). El mensaje fue registrado exitosamente en memoria local de desarrollo.",
+                    chatTable.tableName(), e.getMessage());
         }
+
         return item;
     }
 
@@ -78,15 +118,18 @@ public class ChatMessageDynamoRepository {
             chatTable.query(r -> r.queryConditional(query).scanIndexForward(true))
                     .items()
                     .forEach(items::add);
-            return items;
+            if (!items.isEmpty()) {
+                return items;
+            }
         } catch (ResourceNotFoundException e) {
             log.warn("Tabla DynamoDB {} no encontrada en consulta. Intentando crearla automáticamente...", chatTable.tableName());
             ensureTableExists();
-            return Collections.emptyList();
         } catch (Exception e) {
-            log.warn("Error consultando historial en DynamoDB para diagrama {}: {}", diagramId, e.getMessage());
-            return Collections.emptyList();
+            log.warn("Aviso: DynamoDB no disponible para consulta de diagrama {}. Obteniendo de memoria local: {}", diagramId, e.getMessage());
         }
+
+        // Fallback a memoria local
+        return new ArrayList<>(inMemoryDiagramMessages.getOrDefault(diagramId, Collections.emptyList()));
     }
 
     public List<ChatMessageDynamoItem> findLastMessagesByDiagramId(Long diagramId, int limit) {
@@ -97,17 +140,22 @@ public class ChatMessageDynamoRepository {
             chatTable.query(r -> r.queryConditional(query).scanIndexForward(false).limit(limit))
                     .items()
                     .forEach(items::add);
-            // Invertir para que queden en orden cronológico ascendente (los más antiguos primero hasta el más reciente)
-            Collections.reverse(items);
-            return items;
+            if (!items.isEmpty()) {
+                Collections.reverse(items);
+                return items;
+            }
         } catch (ResourceNotFoundException e) {
             log.warn("Tabla DynamoDB {} no encontrada en consulta de últimos mensajes. Intentando crearla automáticamente...", chatTable.tableName());
             ensureTableExists();
-            return Collections.emptyList();
         } catch (Exception e) {
-            log.warn("Error consultando últimos {} mensajes en DynamoDB para diagrama {}: {}", limit, diagramId, e.getMessage());
-            return Collections.emptyList();
+            log.warn("Aviso: DynamoDB no disponible para ventana deslizante de diagrama {}. Obteniendo de memoria local: {}", limit, diagramId);
         }
+
+        // Fallback a memoria local con ventana deslizante
+        List<ChatMessageDynamoItem> localList = inMemoryDiagramMessages.getOrDefault(diagramId, Collections.emptyList());
+        int size = localList.size();
+        int fromIndex = Math.max(0, size - limit);
+        return new ArrayList<>(localList.subList(fromIndex, size));
     }
 
     public Optional<ChatMessageDynamoItem> findById(String messageId) {
@@ -115,23 +163,42 @@ public class ChatMessageDynamoRepository {
         try {
             DynamoDbIndex<ChatMessageDynamoItem> index = chatTable.index("MessageIdIndex");
             QueryConditional query = QueryConditional.keyEqualTo(Key.builder().partitionValue(messageId).build());
-            return index.query(r -> r.queryConditional(query).limit(1))
+            Optional<ChatMessageDynamoItem> item = index.query(r -> r.queryConditional(query).limit(1))
                     .stream()
                     .flatMap(page -> page.items().stream())
                     .findFirst();
+            if (item.isPresent()) {
+                return item;
+            }
         } catch (Exception e) {
-            log.warn("Error consultando mensaje {} en GSI MessageIdIndex: {}", messageId, e.getMessage());
-            return Optional.empty();
+            log.warn("Aviso: DynamoDB no disponible consultando mensaje {}. Obteniendo de memoria local: {}", messageId, e.getMessage());
         }
+
+        return Optional.ofNullable(inMemoryCache.get(messageId));
     }
 
     public void delete(ChatMessageDynamoItem item) {
-        if (item != null && item.getDiagramId() != null && item.getCreatedAt() != null) {
-            Key key = Key.builder()
-                    .partitionValue(item.getDiagramId())
-                    .sortValue(item.getCreatedAt())
-                    .build();
-            chatTable.deleteItem(key);
+        if (item != null) {
+            if (item.getId() != null) {
+                inMemoryCache.remove(item.getId());
+            }
+            if (item.getDiagramId() != null) {
+                List<ChatMessageDynamoItem> list = inMemoryDiagramMessages.get(item.getDiagramId());
+                if (list != null) {
+                    list.removeIf(m -> m.getId() != null && m.getId().equals(item.getId()));
+                }
+            }
+            if (item.getDiagramId() != null && item.getCreatedAt() != null) {
+                try {
+                    Key key = Key.builder()
+                            .partitionValue(item.getDiagramId())
+                            .sortValue(item.getCreatedAt())
+                            .build();
+                    chatTable.deleteItem(key);
+                } catch (Exception e) {
+                    log.warn("Aviso: No se pudo eliminar de DynamoDB (eliminado de memoria local): {}", e.getMessage());
+                }
+            }
         }
     }
 }

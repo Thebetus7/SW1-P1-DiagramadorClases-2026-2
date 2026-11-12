@@ -110,14 +110,26 @@ echo '/swapfile swap swap defaults 0 0' | sudo tee -a /etc/fstab
 En Amazon Linux 2023, Docker se encuentra optimizado en el repositorio base:
 
 ```bash
-# [SSH / SERVIDOR] 1. Instalar Docker y Git mediante dnf
-sudo dnf install -y docker git
+# [SSH / SERVIDOR] 1. Instalar Docker, Buildx, Docker Compose Plugin y Git mediante dnf nativo
+sudo dnf install -y docker docker-buildx-plugin docker-compose-plugin git
 
-# [SSH / SERVIDOR] 2. Instalar el plugin oficial Docker Compose v2
+# [SSH / SERVIDOR] 2. Instalar los plugins oficiales Docker Compose v2 y Docker Buildx >= v0.19.1
 DOCKER_CONFIG=${DOCKER_CONFIG:-/usr/local/lib/docker}
 sudo mkdir -p $DOCKER_CONFIG/cli-plugins
+sudo mkdir -p /usr/libexec/docker/cli-plugins
+
+# Descargar Docker Compose v2
 sudo curl -SL https://github.com/docker/compose/releases/latest/download/docker-compose-linux-$(uname -m) -o $DOCKER_CONFIG/cli-plugins/docker-compose
 sudo chmod +x $DOCKER_CONFIG/cli-plugins/docker-compose
+
+# Descargar e instalar Docker Buildx v0.19.1 (requerido >= v0.17.0 por Docker Compose)
+BUILDX_ARCH=$(uname -m)
+[ "$BUILDX_ARCH" = "x86_64" ] && BUILDX_ARCH="amd64"
+[ "$BUILDX_ARCH" = "aarch64" ] && BUILDX_ARCH="arm64"
+
+sudo curl -SL "https://github.com/docker/buildx/releases/download/v0.19.1/buildx-v0.19.1.linux-${BUILDX_ARCH}" -o /usr/libexec/docker/cli-plugins/docker-buildx
+sudo chmod +x /usr/libexec/docker/cli-plugins/docker-buildx
+sudo cp /usr/libexec/docker/cli-plugins/docker-buildx $DOCKER_CONFIG/cli-plugins/docker-buildx
 
 # [SSH / SERVIDOR] 3. Iniciar y habilitar el servicio Docker para arranque automático
 sudo systemctl enable --now docker

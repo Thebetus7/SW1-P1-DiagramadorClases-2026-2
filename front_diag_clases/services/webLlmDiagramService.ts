@@ -303,7 +303,7 @@ Instrucción del usuario: "${userText}"`;
 
     // Extracción tolerante y robusta de JSON
     const parsed = extractJsonFromLlmOutput(rawContent);
-    const normalized = normalizeExtractedDiagram(parsed, canvasNodes);
+    const normalized = normalizeExtractedDiagram(parsed, canvasNodes, canvasEdges);
 
     // Fusión segura con los nodos actuales para no perder clases previas
     const { mergedNodes, mergedEdges, affectedIds } = mergeProposalWithCanvas(

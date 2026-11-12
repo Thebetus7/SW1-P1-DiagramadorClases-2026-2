@@ -27,10 +27,13 @@ function UmlAssociationClassEdgeComponent({
   let targetPointX = targetX;
   let targetPointY = targetY;
 
-  if (edgeData?.targetEdgeId) {
-    const baseEdge = getEdge(edgeData.targetEdgeId);
-    const sourceId = baseEdge?.source || edgeData.sourceClassId;
-    const targetId = baseEdge?.target || edgeData.targetClassId;
+  const hasTargetEdge = Boolean(edgeData?.targetEdgeId);
+  const hasParents = Boolean(edgeData?.sourceClassId && edgeData?.targetClassId);
+
+  if (hasTargetEdge || hasParents) {
+    const baseEdge = edgeData?.targetEdgeId ? getEdge(edgeData.targetEdgeId) : undefined;
+    const sourceId = baseEdge?.source || edgeData?.sourceClassId;
+    const targetId = baseEdge?.target || edgeData?.targetClassId;
 
     if (sourceId && targetId) {
       const nodeA = getNode(sourceId);

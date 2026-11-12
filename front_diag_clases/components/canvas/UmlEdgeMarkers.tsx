@@ -54,18 +54,18 @@ export function UmlEdgeMarkers() {
           />
         </marker>
 
-        {/* 3. Agregación: Rombo hueco (blanco con borde oscuro) en el extremo contenedor */}
+        {/* 3. Agregación: Rombo hueco (blanco con borde oscuro) en el extremo contenedor (markerStart) */}
         <marker
           id="uml-aggregation-marker"
           viewBox="0 0 20 20"
-          refX="2"
+          refX="0"
           refY="10"
           markerWidth="14"
           markerHeight="14"
-          orient="auto-start-reverse"
+          orient="auto"
         >
           <polygon
-            points="2 10, 10 4, 18 10, 10 16"
+            points="0 10, 8 4, 16 10, 8 16"
             fill="#ffffff"
             stroke="#334155"
             strokeWidth="1.5"
@@ -73,18 +73,18 @@ export function UmlEdgeMarkers() {
           />
         </marker>
 
-        {/* 4. Composición: Rombo relleno (negro/slate oscuro) en el extremo contenedor */}
+        {/* 4. Composición: Rombo relleno (negro/slate oscuro) en el extremo contenedor (markerStart) */}
         <marker
           id="uml-composition-marker"
           viewBox="0 0 20 20"
-          refX="2"
+          refX="0"
           refY="10"
           markerWidth="14"
           markerHeight="14"
-          orient="auto-start-reverse"
+          orient="auto"
         >
           <polygon
-            points="2 10, 10 4, 18 10, 10 16"
+            points="0 10, 8 4, 16 10, 8 16"
             fill="#1e293b"
             stroke="#1e293b"
             strokeWidth="1.5"

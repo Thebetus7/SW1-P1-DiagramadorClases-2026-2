@@ -23,7 +23,7 @@ const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 // Modelos activos y vigentes en la API de Google Gemini (2.5 Flash como principal con alta capacidad de visión)
 const GEMINI_MODELS = [
   "gemini-2.5-flash",
-  "gemini-2.5-pro",
+  "gemini-1.5-flash",
   "gemini-2.5-flash-lite",
 ];
 
@@ -307,7 +307,8 @@ function calculateGridPosition(index: number): { x: number; y: number } {
  */
 export function normalizeExtractedDiagram(
   rawResult: any,
-  existingNodes: Node[] = []
+  existingNodes: Node[] = [],
+  existingEdges: Edge[] = []
 ): { nodes: Node[]; edges: Edge[]; explanation: string } {
   const rawNodes = Array.isArray(rawResult?.nodes)
     ? rawResult.nodes
@@ -333,6 +334,19 @@ export function normalizeExtractedDiagram(
   // Mapeo flexible de identificadores (permite resolver tanto por ID como por nombre de clase)
   const nodeLookup = new Map<string, string>(); // token normalizado -> nodeId real
   const nodePositions = new Map<string, { x: number; y: number }>();
+
+  // Registrar nodos existentes en caso de haber sido proporcionados
+  existingNodes.forEach((n) => {
+    nodeLookup.set(n.id.toLowerCase(), n.id);
+    const nName = ((n.data as any)?.name || "").toString().trim();
+    if (nName) {
+      nodeLookup.set(nName.toLowerCase(), n.id);
+      nodeLookup.set(cleanSpecialCharacters(nName).toLowerCase(), n.id);
+    }
+    if (n.position) {
+      nodePositions.set(n.id, n.position);
+    }
+  });
 
   // 1. Procesar Nodos (Clases y Notas)
   const finalNodes: Node[] = rawNodes.map((n: any, idx: number) => {
@@ -372,7 +386,7 @@ export function normalizeExtractedDiagram(
     const rawName = String(
       n.data?.name || n.name || n.title || n.label || `Clase_${idx + 1}`
     ).trim();
-    const className = cleanSpecialCharacters(rawName);
+    const className = cleanSpecialCharacters(rawName) || `Clase_${idx + 1}`;
 
     // Registrar en el diccionario por nombre de clase para conectar aristas que usen el nombre en source/target
     nodeLookup.set(className.toLowerCase(), nodeId);
@@ -422,7 +436,10 @@ export function normalizeExtractedDiagram(
   });
 
   // 2. Procesar Relaciones / Aristas (Edges)
-  const validNodeIds = new Set(finalNodes.map((n) => n.id));
+  const validNodeIds = new Set([
+    ...finalNodes.map((n) => n.id),
+    ...existingNodes.map((n) => n.id),
+  ]);
 
   const resolveNodeId = (ref: any): string | null => {
     if (!ref) return null;
@@ -430,17 +447,44 @@ export function normalizeExtractedDiagram(
     if (nodeLookup.has(str)) return nodeLookup.get(str)!;
     // Búsqueda por subcadena
     for (const [key, val] of nodeLookup.entries()) {
-      if (key === str || key.includes(str) || str.includes(key)) {
+      if (key && str && (key === str || key.includes(str) || str.includes(key))) {
         return val;
       }
     }
     return null;
   };
 
+  // Separar aristas binarias normales de clases de asociación ('T')
+  const normalEdges: any[] = [];
+  const associationEdges: any[] = [];
+
+  rawEdges.forEach((e: any) => {
+    const rawRel = e.data?.relationType || e.relationType || e.type || e.relationship;
+    const relType = normalizeRelationType(rawRel);
+    const isAssoc =
+      e.type === "umlAssociationClassEdge" ||
+      relType === "ASSOCIATION_CLASS" ||
+      Boolean(
+        e.data?.isAssociationClass ||
+        e.isAssociationClass ||
+        e.data?.targetEdgeId ||
+        e.targetEdgeId ||
+        e.data?.intermediateNodeId ||
+        e.intermediateNodeId
+      );
+
+    if (isAssoc) {
+      associationEdges.push(e);
+    } else {
+      normalEdges.push(e);
+    }
+  });
+
   const finalEdges: Edge[] = [];
   const processedPairs = new Set<string>();
 
-  rawEdges.forEach((e: any, eIdx: number) => {
+  // 2.1 Procesar primero aristas normales para registrar las aristas base
+  normalEdges.forEach((e: any, eIdx: number) => {
     const rawSource = e.source || e.from || e.origen;
     const rawTarget = e.target || e.to || e.destino;
 
@@ -487,6 +531,170 @@ export function normalizeExtractedDiagram(
     }
   });
 
+  // 2.2 Procesar clases de asociación en 'T' (ancladas a aristas base con línea discontinua perpendicular)
+  const allBaseEdgesPool = [
+    ...finalEdges.filter((fe) => fe.type !== "umlAssociationClassEdge"),
+    ...existingEdges.filter((ee) => ee.type !== "umlAssociationClassEdge"),
+  ];
+
+  associationEdges.forEach((e: any, aIdx: number) => {
+    const rawSource = e.source || e.from || e.origen;
+    const rawTarget = e.target || e.to || e.destino;
+    const rawInter = e.data?.intermediateNodeId || e.intermediateNodeId || rawSource;
+    const rawParent1 = e.data?.sourceClassId || e.sourceClassId || e.sourceClass;
+    const rawParent2 = e.data?.targetClassId || e.targetClassId || e.targetClass;
+    let targetEdgeId = String(e.data?.targetEdgeId || e.targetEdgeId || "").trim();
+
+    const resolvedInter = resolveNodeId(rawInter) || resolveNodeId(rawSource);
+    let resolvedParent1 = resolveNodeId(rawParent1);
+    let resolvedParent2 = resolveNodeId(rawParent2);
+
+    // Caso especial: rawTarget puede ser directamente el ID de la arista base generada o existente
+    if (rawTarget && !targetEdgeId) {
+      const matchBaseEdge = allBaseEdgesPool.find(
+        (be) => be.id === rawTarget || be.id.toLowerCase() === String(rawTarget).toLowerCase().trim()
+      );
+      if (matchBaseEdge) {
+        targetEdgeId = matchBaseEdge.id;
+        if (!resolvedParent1) resolvedParent1 = matchBaseEdge.source;
+        if (!resolvedParent2) resolvedParent2 = matchBaseEdge.target;
+      }
+    }
+
+    const resolvedTarget = resolveNodeId(rawTarget);
+    if (!resolvedParent1 && resolvedTarget && resolvedTarget !== resolvedInter) {
+      resolvedParent1 = resolvedTarget;
+    } else if (
+      !resolvedParent2 &&
+      resolvedTarget &&
+      resolvedTarget !== resolvedInter &&
+      resolvedTarget !== resolvedParent1
+    ) {
+      resolvedParent2 = resolvedTarget;
+    }
+
+    // Si targetEdgeId existe, buscar la arista base entre las aristas registradas o preexistentes
+    if (targetEdgeId) {
+      const foundBase = allBaseEdgesPool.find((fe) => fe.id === targetEdgeId);
+      if (foundBase) {
+        if (!resolvedParent1) resolvedParent1 = foundBase.source;
+        if (!resolvedParent2) resolvedParent2 = foundBase.target;
+      }
+    }
+
+    // Si solo tenemos un extremo padre resuelto, buscar si ese padre participa en una arista base activa
+    if (!targetEdgeId && resolvedParent1 && !resolvedParent2) {
+      const candidateBase = allBaseEdgesPool.find(
+        (be) =>
+          (be.source === resolvedParent1 || be.target === resolvedParent1) &&
+          be.source !== resolvedInter &&
+          be.target !== resolvedInter
+      );
+      if (candidateBase) {
+        targetEdgeId = candidateBase.id;
+        resolvedParent2 = candidateBase.source === resolvedParent1 ? candidateBase.target : candidateBase.source;
+      }
+    } else if (!targetEdgeId && !resolvedParent1 && resolvedParent2) {
+      const candidateBase = allBaseEdgesPool.find(
+        (be) =>
+          (be.source === resolvedParent2 || be.target === resolvedParent2) &&
+          be.source !== resolvedInter &&
+          be.target !== resolvedInter
+      );
+      if (candidateBase) {
+        targetEdgeId = candidateBase.id;
+        resolvedParent1 = candidateBase.source === resolvedParent2 ? candidateBase.target : candidateBase.source;
+      }
+    }
+
+    // Si no tenemos targetEdgeId pero tenemos ambos padres, buscar la arista base o sintetizarla
+    if (!targetEdgeId && resolvedParent1 && resolvedParent2) {
+      const foundBase = allBaseEdgesPool.find(
+        (fe) =>
+          (fe.source === resolvedParent1 && fe.target === resolvedParent2) ||
+          (fe.source === resolvedParent2 && fe.target === resolvedParent1)
+      );
+      if (foundBase) {
+        targetEdgeId = foundBase.id;
+      } else if (validNodeIds.has(resolvedParent1) && validNodeIds.has(resolvedParent2)) {
+        // Generar la arista base requerida por el estándar UML 2.5
+        targetEdgeId = `edge-base-${now}-${aIdx}`;
+        const p1Pos = nodePositions.get(resolvedParent1) || { x: 0, y: 0 };
+        const p2Pos = nodePositions.get(resolvedParent2) || { x: 300, y: 300 };
+        const handles = calculateBestHandles(p1Pos, p2Pos);
+
+        const newBaseEdge: Edge = {
+          id: targetEdgeId,
+          source: resolvedParent1,
+          target: resolvedParent2,
+          sourceHandle: handles.sourceHandle,
+          targetHandle: handles.targetHandle,
+          type: "umlEdge",
+          data: {
+            relationType: "ASSOCIATION",
+            sourceMultiplicity: "",
+            targetMultiplicity: "",
+            name: "",
+          },
+        };
+        finalEdges.push(newBaseEdge);
+        allBaseEdgesPool.push(newBaseEdge);
+      }
+    }
+
+    const effectiveSource = resolvedInter;
+    const effectiveTarget =
+      resolvedParent1 ||
+      resolvedParent2 ||
+      (resolvedTarget && validNodeIds.has(resolvedTarget) ? resolvedTarget : null);
+
+    if (
+      effectiveSource &&
+      effectiveTarget &&
+      validNodeIds.has(effectiveSource) &&
+      validNodeIds.has(effectiveTarget)
+    ) {
+      const parentsKey = [resolvedParent1 || effectiveTarget, resolvedParent2 || ""].sort().join("<->");
+      const assocKey = `assoc:${effectiveSource}->[${parentsKey}]`;
+      if (processedPairs.has(assocKey)) return;
+      processedPairs.add(assocKey);
+
+      const sourcePos = nodePositions.get(effectiveSource) || { x: 0, y: 0 };
+      const targetPos = nodePositions.get(effectiveTarget) || { x: 300, y: 300 };
+      const { sourceHandle, targetHandle } = calculateBestHandles(sourcePos, targetPos);
+
+      const edgeName = cleanSpecialCharacters(
+        String(e.data?.name || e.name || e.data?.label || e.label || "").trim()
+      );
+      const sourceMultiplicity = cleanSpecialCharacters(
+        String(e.data?.sourceMultiplicity || e.sourceMultiplicity || "").trim()
+      );
+      const targetMultiplicity = cleanSpecialCharacters(
+        String(e.data?.targetMultiplicity || e.targetMultiplicity || "").trim()
+      );
+
+      finalEdges.push({
+        id: e.id || `assoc-edge-${now}-${aIdx}`,
+        source: effectiveSource,
+        target: effectiveTarget,
+        sourceHandle: e.sourceHandle || sourceHandle,
+        targetHandle: e.targetHandle || targetHandle,
+        type: "umlAssociationClassEdge",
+        data: {
+          relationType: "ASSOCIATION_CLASS",
+          sourceMultiplicity,
+          targetMultiplicity,
+          name: edgeName,
+          isAssociationClass: true,
+          targetEdgeId: targetEdgeId || "",
+          sourceClassId: resolvedParent1 || effectiveTarget,
+          targetClassId: resolvedParent2 || "",
+          intermediateNodeId: effectiveSource,
+        },
+      });
+    }
+  });
+
   return {
     nodes: finalNodes,
     edges: finalEdges,
@@ -523,20 +731,36 @@ export async function processDiagramWithGemini(
         content: (n.data as any)?.content || "",
       },
     })),
-    edges: currentEdges.map((e) => ({
-      id: e.id,
-      source: e.source,
-      target: e.target,
-      sourceHandle: e.sourceHandle || "bottom-source",
-      targetHandle: e.targetHandle || "top-target",
-      type: "umlEdge",
-      data: {
-        relationType: (e.data as any)?.relationType || "ASSOCIATION",
-        sourceMultiplicity: (e.data as any)?.sourceMultiplicity || "",
-        targetMultiplicity: (e.data as any)?.targetMultiplicity || "",
-        name: (e.data as any)?.name || (e.data as any)?.label || "",
-      },
-    })),
+    edges: currentEdges.map((e) => {
+      const isAssoc =
+        e.type === "umlAssociationClassEdge" ||
+        (e.data as any)?.relationType === "ASSOCIATION_CLASS" ||
+        Boolean((e.data as any)?.isAssociationClass || (e.data as any)?.targetEdgeId);
+
+      return {
+        id: e.id,
+        source: e.source,
+        target: e.target,
+        sourceHandle: e.sourceHandle || "bottom-source",
+        targetHandle: e.targetHandle || "top-target",
+        type: isAssoc ? "umlAssociationClassEdge" : (e.type || "umlEdge"),
+        data: {
+          relationType: (e.data as any)?.relationType || (isAssoc ? "ASSOCIATION_CLASS" : "ASSOCIATION"),
+          sourceMultiplicity: (e.data as any)?.sourceMultiplicity || "",
+          targetMultiplicity: (e.data as any)?.targetMultiplicity || "",
+          name: (e.data as any)?.name || (e.data as any)?.label || "",
+          ...(isAssoc
+            ? {
+                isAssociationClass: true,
+                targetEdgeId: (e.data as any)?.targetEdgeId || "",
+                sourceClassId: (e.data as any)?.sourceClassId || "",
+                targetClassId: (e.data as any)?.targetClassId || "",
+                intermediateNodeId: (e.data as any)?.intermediateNodeId || e.source || "",
+              }
+            : {}),
+        },
+      };
+    }),
   };
 
   const systemInstruction = `
@@ -678,7 +902,7 @@ Genera el JSON resultante con la estructura solicitada.`;
           throw new Error("La respuesta de la IA no contiene una lista de nodos válida.");
         }
 
-        return normalizeExtractedDiagram(parsed, currentNodes);
+        return normalizeExtractedDiagram(parsed, currentNodes, currentEdges);
       } catch (err: any) {
         if (attempt < 3) {
           await sleep(attempt * 800);
@@ -827,27 +1051,110 @@ export function applyMultimodalMergeLayout(
 
   // 4. Preservar y fusionar aristas / relaciones
   const mergedEdges: Edge[] = existingEdges.map((e) => ({ ...e }));
-  const existingEdgeKeys = new Set(
-    existingEdges.map((e) => `${e.source}->${e.target}:${(e.data as any)?.relationType || "ASSOCIATION"}`)
-  );
+
+  const getEdgeKey = (e: Edge, src?: string, tgt?: string, edgeData?: any) => {
+    const s = src || e.source;
+    const t = tgt || e.target;
+    const d = edgeData || e.data || {};
+    const rel = d.relationType || "ASSOCIATION";
+    const isAssoc =
+      e.type === "umlAssociationClassEdge" ||
+      rel === "ASSOCIATION_CLASS" ||
+      Boolean(d.isAssociationClass);
+
+    if (isAssoc) {
+      const inter = d.intermediateNodeId || s;
+      const sClass = d.sourceClassId || t;
+      const tClass = d.targetClassId || "";
+      const parents = [sClass, tClass].sort().join("<->");
+      return `assoc:${inter}->[${parents}]`;
+    }
+    return `${s}->${t}:${rel}`;
+  };
+
+  const existingEdgeKeys = new Set(existingEdges.map((e) => getEdgeKey(e)));
   const existingEdgeIds = new Set(existingEdges.map((e) => e.id));
+  const edgeIdRemap = new Map<string, string>();
 
   for (const edge of extractedEdges) {
     const source = idRemap.get(edge.source) || edge.source;
     const target = idRemap.get(edge.target) || edge.target;
-    const relType = (edge.data as any)?.relationType || "ASSOCIATION";
-    const key = `${source}->${target}:${relType}`;
+    const rawRel = (edge.data as any)?.relationType || (edge as any).relationType || "ASSOCIATION";
+    const relType = normalizeRelationType(rawRel);
 
-    if (!existingEdgeKeys.has(key) && !existingEdgeIds.has(edge.id)) {
+    const edgeData: any = { ...(edge.data || {}) };
+
+    // Remapear identificadores de nodos si fueron modificados por idRemap (RB-07.4)
+    if (edgeData.sourceClassId && idRemap.has(edgeData.sourceClassId)) {
+      edgeData.sourceClassId = idRemap.get(edgeData.sourceClassId);
+    }
+    if (edgeData.targetClassId && idRemap.has(edgeData.targetClassId)) {
+      edgeData.targetClassId = idRemap.get(edgeData.targetClassId);
+    }
+    if (edgeData.intermediateNodeId && idRemap.has(edgeData.intermediateNodeId)) {
+      edgeData.intermediateNodeId = idRemap.get(edgeData.intermediateNodeId);
+    }
+
+    const isAssoc =
+      edge.type === "umlAssociationClassEdge" ||
+      relType === "ASSOCIATION_CLASS" ||
+      Boolean(edgeData.isAssociationClass || edgeData.targetEdgeId);
+
+    if (isAssoc) {
+      edgeData.isAssociationClass = true;
+      edgeData.relationType = "ASSOCIATION_CLASS";
+      if (!edgeData.intermediateNodeId) {
+        edgeData.intermediateNodeId = source;
+      }
+      if (!edgeData.sourceClassId) {
+        edgeData.sourceClassId = target;
+      }
+
+      // Reconciliar si targetEdgeId fue remapeado previamente
+      if (edgeData.targetEdgeId && edgeIdRemap.has(edgeData.targetEdgeId)) {
+        edgeData.targetEdgeId = edgeIdRemap.get(edgeData.targetEdgeId);
+      }
+
+      // Si falta targetEdgeId o si el targetEdgeId actual no existe en mergedEdges, buscar la arista base
+      const targetEdgeExistsInMerged = Boolean(
+        edgeData.targetEdgeId && mergedEdges.some((m) => m.id === edgeData.targetEdgeId)
+      );
+      if (!targetEdgeExistsInMerged && edgeData.sourceClassId && edgeData.targetClassId) {
+        const base = mergedEdges.find(
+          (m) =>
+            m.type !== "umlAssociationClassEdge" &&
+            ((m.source === edgeData.sourceClassId && m.target === edgeData.targetClassId) ||
+              (m.source === edgeData.targetClassId && m.target === edgeData.sourceClassId))
+        );
+        if (base) {
+          edgeData.targetEdgeId = base.id;
+        }
+      }
+    } else {
+      edgeData.relationType = relType;
+    }
+
+    const key = getEdgeKey({ ...edge, type: isAssoc ? "umlAssociationClassEdge" : edge.type }, source, target, edgeData);
+
+    if (!existingEdgeKeys.has(key)) {
       existingEdgeKeys.add(key);
+
+      const edgeId = existingEdgeIds.has(edge.id)
+        ? `${isAssoc ? "assoc-" : ""}edge-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`
+        : edge.id;
+      existingEdgeIds.add(edgeId);
+
+      if (edge.id && edgeId !== edge.id) {
+        edgeIdRemap.set(edge.id, edgeId);
+      }
+
       mergedEdges.push({
         ...edge,
+        id: edgeId,
         source,
         target,
-        data: {
-          ...edge.data,
-          relationType: relType,
-        },
+        type: isAssoc ? "umlAssociationClassEdge" : (edge.type || "umlEdge"),
+        data: edgeData,
       });
     }
   }
@@ -887,20 +1194,36 @@ export async function processMultimodalDiagramWithGemini(
         content: (n.data as any)?.content || "",
       },
     })),
-    edges: currentEdges.map((e) => ({
-      id: e.id,
-      source: e.source,
-      target: e.target,
-      sourceHandle: e.sourceHandle || "bottom-source",
-      targetHandle: e.targetHandle || "top-target",
-      type: "umlEdge",
-      data: {
-        relationType: (e.data as any)?.relationType || "ASSOCIATION",
-        sourceMultiplicity: (e.data as any)?.sourceMultiplicity || "",
-        targetMultiplicity: (e.data as any)?.targetMultiplicity || "",
-        name: (e.data as any)?.name || (e.data as any)?.label || "",
-      },
-    })),
+    edges: currentEdges.map((e) => {
+      const isAssoc =
+        e.type === "umlAssociationClassEdge" ||
+        (e.data as any)?.relationType === "ASSOCIATION_CLASS" ||
+        Boolean((e.data as any)?.isAssociationClass || (e.data as any)?.targetEdgeId);
+
+      return {
+        id: e.id,
+        source: e.source,
+        target: e.target,
+        sourceHandle: e.sourceHandle || "bottom-source",
+        targetHandle: e.targetHandle || "top-target",
+        type: isAssoc ? "umlAssociationClassEdge" : (e.type || "umlEdge"),
+        data: {
+          relationType: (e.data as any)?.relationType || (isAssoc ? "ASSOCIATION_CLASS" : "ASSOCIATION"),
+          sourceMultiplicity: (e.data as any)?.sourceMultiplicity || "",
+          targetMultiplicity: (e.data as any)?.targetMultiplicity || "",
+          name: (e.data as any)?.name || (e.data as any)?.label || "",
+          ...(isAssoc
+            ? {
+                isAssociationClass: true,
+                targetEdgeId: (e.data as any)?.targetEdgeId || "",
+                sourceClassId: (e.data as any)?.sourceClassId || "",
+                targetClassId: (e.data as any)?.targetClassId || "",
+                intermediateNodeId: (e.data as any)?.intermediateNodeId || e.source || "",
+              }
+            : {}),
+        },
+      };
+    }),
   };
 
   const systemInstruction = `
@@ -911,10 +1234,50 @@ El usuario ha adjuntado una imagen (captura de pantalla, foto de pizarra o bocet
 1. PRESERVACIÓN ESTRICTA DEL TRABAJO PREVIO: No elimines ni alteres las clases o relaciones que ya existen en el diagrama, a menos que el usuario lo solicite taxativamente con comandos como 'borra' o 'reemplaza todo'. Conserva íntegramente los nombres, atributos y relaciones preexistentes.
 2. EXTRACCIÓN Y FUSIÓN DE NUEVAS ENTIDADES: Identifica en la imagen los clasificadores, atributos, métodos o relaciones adicionales que complementen el modelo. Si una clase de la imagen coincide con una existente, complementa sus miembros sin borrar los que ya estaban.
 3. PREVENCIÓN DE SOLAPAMIENTO ESPACIAL (RB-07.5): Posiciona los clasificadores deducidos de la imagen en coordenadas adyacentes libres (desplazadas en el eje X hacia la derecha o en el eje Y hacia abajo respecto a los nodos existentes) para que no se superpongan directamente encima de las clases preexistentes.
-4. ESTÁNDAR UML 2.5:
+4. ESTÁNDAR UML 2.5 Y DETECCIÓN PRECISA DE TERMINALES EN IMÁGENES:
    - Clases (type: "umlClass"): Nombres en PascalCase, visibilidades (+, -, #, ~), atributos y métodos tipados.
    - Notas (type: "umlNote"): contenido explicativo.
-   - Relaciones (type: "umlEdge"): ASSOCIATION, GENERALIZATION, COMPOSITION, AGGREGATION, DEPENDENCY, DIRECTED_ASSOCIATION, REALIZATION, ASSOCIATION_CLASS.
+   - Relaciones (type: "umlEdge"):
+     * COMPOSITION: Rombo relleno negro sólido (◆). 'source' es OBLIGATORIAMENTE la clase con el rombo (contenedor), 'target' es la clase contenida. NUNCA clasifiques como simple ASSOCIATION si hay un rombo negro.
+     * AGGREGATION: Rombo hueco blanco (◇). 'source' es la clase con el rombo (agregador), 'target' la clase agregada.
+     * GENERALIZATION: Herencia con triángulo cerrado hueco blanco (▷). 'target' es la superclase / clase padre (a donde apunta el triángulo), 'source' es la subclase / clase hija. NUNCA la clasifiques como DIRECTED_ASSOCIATION ni inviertas su dirección.
+     * DIRECTED_ASSOCIATION: Flecha abierta simple en la punta (►).
+     * REALIZATION: Línea discontinua con triángulo cerrado hueco ( - - ▷).
+     * DEPENDENCY: Línea discontinua con flecha abierta (- - ►).
+     * ASSOCIATION: Línea sólida sin flechas ni rombos en los extremos.
+
+### INTERPRETACIÓN DE BIFURCACIONES Y UNIONES EN 'T' (CLASES DE ASOCIACIÓN UML 2.5):
+Cualquier dibujo, boceto a mano alzada o diagrama en la imagen que presente una bifurcación o unión en 'T' (dos clases conectadas horizontalmente con una rama perpendicular o vertical hacia una tercera clase intermedia/inferior) DEBE interpretarse OBLIGATORIAMENTE como una CLASE DE ASOCIACIÓN:
+1. Genera un edge base horizontal directo entre las dos clases padre extremas (type: "umlEdge"):
+   {
+     "id": "edge-base-1",
+     "source": "<id-padre-1>",
+     "target": "<id-padre-2>",
+     "type": "umlEdge",
+     "data": { "relationType": "ASSOCIATION", "name": "" }
+   }
+2. Genera un edge asociativo (conector en 'T' con línea discontinua perpendicular) desde la clase intermedia hacia la arista base:
+   {
+     "id": "assoc-edge-1",
+     "source": "<id-clase-intermedia>",
+     "target": "<id-padre-1>",
+     "type": "umlAssociationClassEdge",
+     "data": {
+       "relationType": "ASSOCIATION_CLASS",
+       "isAssociationClass": true,
+       "targetEdgeId": "edge-base-1",
+       "sourceClassId": "<id-padre-1>",
+       "targetClassId": "<id-padre-2>",
+       "intermediateNodeId": "<id-clase-intermedia>",
+       "name": ""
+     }
+   }
+
+### INFERENCIA CONTEXTUAL DE NOMBRES PARA CAJAS VACÍAS O SIN TEXTO:
+Si en la imagen aparecen rectángulos, cajas o nodos vacíos, sin texto legible o con trazos incompletos dentro de una estructura:
+- NUNCA generes nombres vacíos ni nombres genéricos como "Clase1" o "Untitled".
+- Infiere y sugiere nombres contextuales inteligentes y coherentes con el dominio deducido a partir del texto visible (por ejemplo, si una caja rotula 'Colaborador' en una estructura en 'T', sugiere 'Proyecto' y 'Usuario' o 'Asignacion' para las entidades complementarias; si rotula 'Inscripcion', sugiere 'Estudiante' y 'Curso').
+- Sugiere atributos esenciales coherentes para dichas entidades (como 'id: Long', 'nombre: String', 'fechaCreacion: Date').
 
 ### FORMATO JSON REQUERIDO DE RESPUESTA:
 {
@@ -967,8 +1330,8 @@ Genera el JSON resultante con la estructura solicitada.`;
                   role: "user",
                   parts: [
                     {
-                      inline_data: {
-                        mime_type: imageAttachment.mimeType || "image/jpeg",
+                      inlineData: {
+                        mimeType: imageAttachment.mimeType || "image/jpeg",
                         data: imageAttachment.base64Data,
                       },
                     },
@@ -1021,7 +1384,7 @@ Genera el JSON resultante con la estructura solicitada.`;
         }
 
         // Normalizar y enriquecer el esquema devuelto por la IA
-        const normalized = normalizeExtractedDiagram(parsed, currentNodes);
+        const normalized = normalizeExtractedDiagram(parsed, currentNodes, currentEdges);
 
         // FUSIÓN CONTEXTUAL DETERMINISTA Y PREVENCIÓN DE SOLAPAMIENTO ESPACIAL (RB-07.4 y RB-07.5)
         const layoutMerged = applyMultimodalMergeLayout(
@@ -1069,7 +1432,7 @@ Tu misión es analizar exhaustivamente la imagen proporcionada (que puede ser un
 
 1. TODAS LAS CLASES UML:
    - Identifica cada caja o rectángulo que represente una clase.
-   - Extrae el NOMBRE DE LA CLASE en PascalCase (ej: "Cliente", "Pedido", "DetalleFactura"). ¡NUNCA dejes nombres genéricos ni vacíos!
+   - Extrae el NOMBRE DE LA CLASE en PascalCase (ej: "Cliente", "Pedido", "DetalleFactura"). ¡NUNCA dejes nombres genéricos ni vacíos! Si una caja rectangular está vacía o sin rótulo legible dentro de una estructura, infiere un nombre contextual inteligente y coherente con el dominio deducido a partir de los elementos visibles (ej: si se ancla a 'Colaborador', sugiere 'Proyecto' y 'Usuario' o 'Asignacion').
    - Extrae el ESTEREOTIPO si existe entre << >> (ej: "interface", "abstract", "entity", "service").
    - Extrae TODOS los ATRIBUTOS de la clase en su compartimento:
      * Interpreta la visibilidad: "+" (public), "-" (private), "#" (protected), "~" (package). Si no tiene signo, asume "-".
@@ -1088,17 +1451,23 @@ Tu misión es analizar exhaustivamente la imagen proporcionada (que puede ser un
 
 3. TODAS LAS RELACIONES ENTRE CLASES Y NOTAS (ARISTAS):
    - Reconoce las líneas que conectan clases y su semántica UML exacta:
-     * "ASSOCIATION": Línea sólida simple sin flecha.
-     * "DIRECTED_ASSOCIATION": Línea sólida con flecha abierta en la punta (►).
-     * "GENERALIZATION": Herencia con triángulo cerrado hueco (▷).
-     * "REALIZATION": Implementación con línea punteada y triángulo hueco ( - - ▷).
-     * "AGGREGATION": Agregación con rombo hueco blanco (◇).
-     * "COMPOSITION": Composición con rombo relleno negro (◆).
+     * "ASSOCIATION": Línea sólida simple sin flecha ni rombo en los extremos.
+     * "DIRECTED_ASSOCIATION": Línea sólida con flecha abierta en la punta (► o >).
+     * "GENERALIZATION": Herencia con triángulo cerrado hueco blanco (▷, △, ◁, ▽).
+     * "REALIZATION": Implementación con línea punteada/discontinua y triángulo cerrado hueco ( - - ▷).
+     * "AGGREGATION": Agregación débil con rombo hueco/blanco (◇).
+     * "COMPOSITION": Composición fuerte con rombo relleno negro sólido (◆).
      * "DEPENDENCY": Dependencia con línea punteada y flecha abierta (- - ►).
-     * "ASSOCIATION_CLASS": Conector en 'T' de clase de asociación con línea discontinua perpendicular que ancla una clase intermedia a una arista existente entre dos entidades. Usa type: "umlAssociationClassEdge" indicando targetEdgeId, sourceClassId, targetClassId e intermediateNodeId.
+     * "ASSOCIATION_CLASS": Conector o unión en 'T' de clase de asociación con línea discontinua perpendicular que ancla una clase intermedia a una arista base existente entre dos entidades. DEBES generar la arista base directa horizontal (type: "umlEdge") y el conector asociativo hacia ella con type: "umlAssociationClassEdge" indicando targetEdgeId, sourceClassId, targetClassId e intermediateNodeId.
+
+   - REGLAS INNEGOCIABLES DE DETECCIÓN Y ORIENTACIÓN DE EXTREMOS (UML 2.5):
+     * COMPOSITION (◆): Examina minuciosamente el punto de contacto con cada clase. Si hay un rombo relleno de color negro pegado a una clase, la relación ES OBLIGATORIAMENTE "COMPOSITION". 'source' DEBE ser siempre la clase con el rombo negro (el contenedor/todo), y 'target' la clase contenida (parte). ¡NUNCA lo clasifiques como ASSOCIATION ni DIRECTED_ASSOCIATION si tiene rombo!
+     * AGGREGATION (◇): Si hay un rombo hueco o blanco pegado a una clase, ES "AGGREGATION". 'source' DEBE ser la clase con el rombo (contenedor), y 'target' la clase agregada.
+     * GENERALIZATION (Herencia ▷): El triángulo hueco blanco apunta SIEMPRE hacia la clase padre / superclase. Por tanto, 'target' DEBE ser la superclase (hacia donde apunta el triángulo hueco), y 'source' DEBE ser la subclase / clase hija (de donde sale la línea). ¡NUNCA inviertas este sentido ni uses DIRECTED_ASSOCIATION para herencia!
+     * MULTIPLICIDADES: 'sourceMultiplicity' corresponde al número/rango escrito junto a la clase 'source'. 'targetMultiplicity' corresponde al número/rango junto a la clase 'target'. (Ejemplo: si Customer tiene el rombo negro y dice '1', y ShoppingCart dice '0..*', entonces source: "Customer", target: "ShoppingCart", relationType: "COMPOSITION", sourceMultiplicity: "1", targetMultiplicity: "0..*").
    - Para líneas punteadas o anclajes que conectan una nota a una clase (NoteLink), usa relationType: "DEPENDENCY" o "ASSOCIATION".
-   - "source": Nombre o ID de la clase/nota origen.
-   - "target": Nombre o ID de la clase/nota destino.
+   - "source": Nombre o ID de la clase/nota origen conforme a las reglas anteriores.
+   - "target": Nombre o ID de la clase/nota destino conforme a las reglas anteriores.
    - "sourceMultiplicity": Multiplicidad cerca del origen (ej: "1", "0..1", "1..*", "*").
    - "targetMultiplicity": Multiplicidad cerca del destino (ej: "1", "0..1", "1..*", "*").
    - "name": Nombre o verbo de la relación si aparece sobre o junto a la línea (ej: "contiene", "genera", "pertenece").
@@ -1445,8 +1814,8 @@ Consulta del usuario:
   const requestParts: any[] = [];
   if (imageAttachment && imageAttachment.base64Data) {
     requestParts.push({
-      inline_data: {
-        mime_type: imageAttachment.mimeType || "image/jpeg",
+      inlineData: {
+        mimeType: imageAttachment.mimeType || "image/jpeg",
         data: imageAttachment.base64Data,
       },
     });
