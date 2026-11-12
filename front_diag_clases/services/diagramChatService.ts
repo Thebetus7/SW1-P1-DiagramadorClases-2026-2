@@ -91,3 +91,33 @@ export async function resolveProposal(
     })
   );
 }
+
+/**
+ * Sube una imagen optimizada asociada al diagrama al almacenamiento del servidor backend
+ */
+export async function uploadDiagramImage(
+  diagramId: number,
+  file: File | Blob
+): Promise<{ imageUrl: string; filename: string; size?: number; contentType?: string }> {
+  const url = `${getApiBaseUrl()}/diagrams/${diagramId}/images`;
+  const formData = new FormData();
+  formData.append("file", file, (file as File).name || "diagram_attachment.jpg");
+
+  try {
+    const res = await fetch(url, {
+      method: "POST",
+      body: formData,
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.message || `Error al subir imagen (${res.status})`);
+    }
+    return await res.json();
+  } catch (error: any) {
+    if (error.name === "TypeError" || error.message?.includes("fetch")) {
+      throw new Error(`No se pudo conectar con el servidor backend en ${getApiBaseUrl()}.`);
+    }
+    throw error;
+  }
+}
+

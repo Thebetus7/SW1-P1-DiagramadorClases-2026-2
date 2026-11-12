@@ -1,7 +1,9 @@
 import 'dart:math';
 import 'package:flutter/material.dart';
 import '../models/diagram_model.dart';
+import 'class_detail_bottom_sheet.dart';
 import 'uml_marker_painter_utils.dart';
+import 'uml_note_card.dart';
 
 class MobileCanvasView extends StatelessWidget {
   final DiagramCanvasData diagram;
@@ -10,7 +12,7 @@ class MobileCanvasView extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    if (diagram.nodes.isEmpty) {
+    if (diagram.nodes.isEmpty && diagram.notes.isEmpty) {
       return const Center(
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
@@ -18,7 +20,7 @@ class MobileCanvasView extends StatelessWidget {
             Icon(Icons.dashboard_outlined, size: 56, color: Colors.grey),
             SizedBox(height: 12),
             Text(
-              'El lienzo no tiene clases aún.',
+              'El lienzo no tiene elementos aún.',
               style: TextStyle(color: Colors.grey, fontSize: 14),
             ),
           ],
@@ -30,7 +32,7 @@ class MobileCanvasView extends StatelessWidget {
     const double canvasWidth = 5000.0;
     const double canvasHeight = 5000.0;
 
-    final nodeMap = {for (var n in diagram.nodes) n.id: n};
+    final nodeMap = {for (var n in diagram.allNodes) n.id: n};
 
     return InteractiveViewer(
       boundaryMargin: const EdgeInsets.all(800),
@@ -57,12 +59,24 @@ class MobileCanvasView extends StatelessWidget {
               ),
             ),
 
-            // Nodos de clases UML renderizados como tarjetas interactivas
+            // Nodos de clases UML renderizados como tarjetas interactivas ortogonales
             for (final node in diagram.nodes)
               Positioned(
                 left: node.x,
                 top: node.y,
-                child: UmlClassCard(node: node),
+                child: UmlClassCard(
+                  node: node,
+                  edges: diagram.edges,
+                  nodeNames: diagram.nodeNames,
+                ),
+              ),
+
+            // Nodos de notas UML renderizados con pliegue dog-ear
+            for (final note in diagram.notes)
+              Positioned(
+                left: note.x,
+                top: note.y,
+                child: UmlNoteCard(note: note),
               ),
           ],
         ),
@@ -138,7 +152,7 @@ class GridDotsPainter extends CustomPainter {
 
 class UmlEdgesPainter extends CustomPainter {
   final List<UmlEdge> edges;
-  final Map<String, UmlClassNode> nodesMap;
+  final Map<String, UmlCanvasNode> nodesMap;
 
   UmlEdgesPainter({required this.edges, required this.nodesMap});
 
@@ -151,17 +165,23 @@ class UmlEdgesPainter extends CustomPainter {
       final target = nodesMap[edge.target];
       if (source == null || target == null) continue;
 
-      // Estimación del tamaño de cada tarjeta de clase
-      const double cardW = 220.0;
-      final double sourceH = max(110.0, 70.0 + (source.attributes.length + source.methods.length) * 16.0);
-      final double targetH = max(110.0, 70.0 + (target.attributes.length + target.methods.length) * 16.0);
+      // Estimación del tamaño de cada clasificador o nota
+      final double cardW1 = source is UmlNoteNode ? 200.0 : 220.0;
+      final double sourceH = source is UmlClassNode
+          ? max(110.0, 70.0 + (source.attributes.length + source.methods.length) * 16.0)
+          : 110.0;
 
-      final c1 = Offset(source.x + cardW / 2, source.y + sourceH / 2);
-      final c2 = Offset(target.x + cardW / 2, target.y + targetH / 2);
+      final double cardW2 = target is UmlNoteNode ? 200.0 : 220.0;
+      final double targetH = target is UmlClassNode
+          ? max(110.0, 70.0 + (target.attributes.length + target.methods.length) * 16.0)
+          : 110.0;
+
+      final c1 = Offset(source.x + cardW1 / 2, source.y + sourceH / 2);
+      final c2 = Offset(target.x + cardW2 / 2, target.y + targetH / 2);
 
       // Calcular puntos de intersección perimetral directa centro-a-borde
-      final p1 = UmlMarkerPainterUtils.getNodePerimeterIntersection(c1, c2, cardW, sourceH);
-      final p2 = UmlMarkerPainterUtils.getNodePerimeterIntersection(c2, c1, cardW, targetH);
+      final p1 = UmlMarkerPainterUtils.getNodePerimeterIntersection(c1, c2, cardW1, sourceH);
+      final p2 = UmlMarkerPainterUtils.getNodePerimeterIntersection(c2, c1, cardW2, targetH);
 
       final linePaint = Paint()
         ..color = strokeColor
@@ -171,7 +191,8 @@ class UmlEdgesPainter extends CustomPainter {
       final relType = edge.relationType.toUpperCase();
 
       // 1. Trazado del cuerpo de la línea (punteada vs continua)
-      if (relType == 'DEPENDENCY' || relType == 'REALIZATION') {
+      // Soporta clases-asociación, dependencias y realizaciones
+      if (relType == 'DEPENDENCY' || relType == 'REALIZATION' || edge.isAssociationClass) {
         _drawDashedLine(canvas, p1, p2, linePaint);
       } else {
         canvas.drawLine(p1, p2, linePaint);
@@ -245,131 +266,140 @@ class UmlEdgesPainter extends CustomPainter {
 
 class UmlClassCard extends StatelessWidget {
   final UmlClassNode node;
+  final List<UmlEdge> edges;
+  final Map<String, String>? nodeNames;
 
-  const UmlClassCard({super.key, required this.node});
+  const UmlClassCard({
+    super.key,
+    required this.node,
+    this.edges = const [],
+    this.nodeNames,
+  });
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      width: 220,
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: const Color(0xFF94A3B8), width: 1.2), // Slate 400
-        boxShadow: const [
-          BoxShadow(
-            color: Color(0x14000000),
-            blurRadius: 8,
-            offset: Offset(0, 3),
-          ),
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          // Cabecera con Nombre y Estereotipo
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-            decoration: const BoxDecoration(
-              color: Color(0xFFF1F5F9), // Slate 100
-              borderRadius: BorderRadius.only(
-                topLeft: Radius.circular(7),
-                topRight: Radius.circular(7),
+    return GestureDetector(
+      onTap: () => ClassDetailBottomSheet.show(context, node, edges, nodeNames),
+      child: MouseRegion(
+        cursor: SystemMouseCursors.click,
+        child: Container(
+          width: 220,
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.zero,
+            border: Border.all(color: const Color(0xFF94A3B8), width: 1.2), // Slate 400
+            boxShadow: const [
+              BoxShadow(
+                color: Color(0x14000000),
+                blurRadius: 8,
+                offset: Offset(0, 3),
               ),
-              border: Border(bottom: BorderSide(color: Color(0xFFE2E8F0))),
-            ),
-            child: Column(
-              children: [
-                if (node.stereotype.isNotEmpty)
-                  Text(
-                    '«${node.stereotype}»',
-                    style: const TextStyle(
-                      fontSize: 10,
-                      fontStyle: FontStyle.italic,
-                      color: Color(0xFF64748B),
-                    ),
-                  ),
-                Text(
-                  node.name,
-                  textAlign: TextAlign.center,
-                  style: const TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.bold,
-                    color: Color(0xFF0F172A), // Slate 900
-                  ),
+            ],
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // Cabecera con Nombre y Estereotipo
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                decoration: const BoxDecoration(
+                  color: Color(0xFFF1F5F9), // Slate 100
+                  borderRadius: BorderRadius.zero,
+                  border: Border(bottom: BorderSide(color: Color(0xFFE2E8F0))),
                 ),
-              ],
-            ),
-          ),
-
-          // Compartimento de Atributos
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-            decoration: const BoxDecoration(
-              color: Colors.white,
-              border: Border(bottom: BorderSide(color: Color(0xFFE2E8F0))),
-            ),
-            child: node.attributes.isEmpty
-                ? const Text(
-                    'sin atributos',
-                    style: TextStyle(fontSize: 10, fontStyle: FontStyle.italic, color: Color(0xFF94A3B8)),
-                  )
-                : Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: node.attributes
-                        .map(
-                          (attr) => Padding(
-                            padding: const EdgeInsets.symmetric(vertical: 1.5),
-                            child: Text(
-                              attr,
-                              style: const TextStyle(
-                                fontSize: 11,
-                                fontFamily: 'monospace',
-                                color: Color(0xFF334155),
-                              ),
-                            ),
-                          ),
-                        )
-                        .toList(),
-                  ),
-          ),
-
-          // Compartimento de Métodos
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-            decoration: const BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.only(
-                bottomLeft: Radius.circular(7),
-                bottomRight: Radius.circular(7),
+                child: Column(
+                  children: [
+                    if (node.stereotype.isNotEmpty)
+                      Text(
+                        '«${node.stereotype}»',
+                        style: const TextStyle(
+                          fontSize: 10,
+                          fontStyle: FontStyle.italic,
+                          color: Color(0xFF64748B),
+                        ),
+                      ),
+                    Text(
+                      node.name,
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.bold,
+                        fontStyle: node.isAbstract ? FontStyle.italic : FontStyle.normal,
+                        color: const Color(0xFF0F172A), // Slate 900
+                      ),
+                    ),
+                  ],
+                ),
               ),
-            ),
-            child: node.methods.isEmpty
-                ? const Text(
-                    'sin métodos',
-                    style: TextStyle(fontSize: 10, fontStyle: FontStyle.italic, color: Color(0xFF94A3B8)),
-                  )
-                : Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: node.methods
-                        .map(
-                          (m) => Padding(
-                            padding: const EdgeInsets.symmetric(vertical: 1.5),
-                            child: Text(
-                              m,
-                              style: const TextStyle(
-                                fontSize: 11,
-                                fontFamily: 'monospace',
-                                color: Color(0xFF334155),
+
+              // Compartimento de Atributos
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                decoration: const BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.zero,
+                  border: Border(bottom: BorderSide(color: Color(0xFFE2E8F0))),
+                ),
+                child: node.attributes.isEmpty
+                    ? const Text(
+                        'sin atributos',
+                        style: TextStyle(fontSize: 10, fontStyle: FontStyle.italic, color: Color(0xFF94A3B8)),
+                      )
+                    : Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: node.attributes
+                            .map(
+                              (attr) => Padding(
+                                padding: const EdgeInsets.symmetric(vertical: 1.5),
+                                child: Text(
+                                  attr,
+                                  style: const TextStyle(
+                                    fontSize: 11,
+                                    fontFamily: 'monospace',
+                                    color: Color(0xFF334155),
+                                  ),
+                                ),
                               ),
-                            ),
-                          ),
-                        )
-                        .toList(),
-                  ),
+                            )
+                            .toList(),
+                      ),
+              ),
+
+              // Compartimento de Métodos
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                decoration: const BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.zero,
+                ),
+                child: node.methods.isEmpty
+                    ? const Text(
+                        'sin métodos',
+                        style: TextStyle(fontSize: 10, fontStyle: FontStyle.italic, color: Color(0xFF94A3B8)),
+                      )
+                    : Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: node.methods
+                            .map(
+                              (m) => Padding(
+                                padding: const EdgeInsets.symmetric(vertical: 1.5),
+                                child: Text(
+                                  m,
+                                  style: const TextStyle(
+                                    fontSize: 11,
+                                    fontFamily: 'monospace',
+                                    color: Color(0xFF334155),
+                                  ),
+                                ),
+                              ),
+                            )
+                            .toList(),
+                      ),
+              ),
+            ],
           ),
-        ],
+        ),
       ),
     );
   }

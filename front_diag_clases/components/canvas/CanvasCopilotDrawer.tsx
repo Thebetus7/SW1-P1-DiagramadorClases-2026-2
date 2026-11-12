@@ -20,11 +20,15 @@ import {
   XCircle,
   Settings,
   Cpu,
+  Image as ImageIcon,
 } from "lucide-react";
 import { ChatMessage, ChatProposalPayload, CopilotMode, AiEngineConfig } from "@/types";
+import { compressImageToJpeg, CompressedImageResult, isValidImageMimeType } from "@/utils/imageCompressor";
+import { resolveImageUrl } from "@/utils/imageUrlResolver";
 import { ProactiveSuggestionCard } from "./ProactiveSuggestionCard";
 import { MarkdownPreview } from "./MarkdownPreview";
 import { AiEngineSettingsModal } from "./AiEngineSettingsModal";
+import { ImageLightboxModal } from "./ImageLightboxModal";
 
 interface CanvasCopilotDrawerProps {
   isOpen: boolean;
@@ -33,7 +37,11 @@ interface CanvasCopilotDrawerProps {
   diagramName: string;
   currentUser?: { id: number; nombre: string } | null;
   messages: ChatMessage[];
-  onSendMessage: (content: string, mode: CopilotMode) => Promise<void>;
+  onSendMessage: (
+    content: string,
+    mode: CopilotMode,
+    imageAttachment?: CompressedImageResult | null
+  ) => Promise<void>;
   onAcceptProposal: (messageId: string, proposal?: ChatProposalPayload | null) => Promise<void>;
   onIgnoreProposal: (messageId: string) => Promise<void>;
   isLoading: boolean;
@@ -72,6 +80,13 @@ export function CanvasCopilotDrawer({
   const [speechSupported, setSpeechSupported] = useState(true);
   const [speechFeedback, setSpeechFeedback] = useState<string | null>(null);
   const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
+
+  // Estados multimodales para imágenes adjuntas (Spec 07)
+  const [attachedImage, setAttachedImage] = useState<CompressedImageResult | null>(null);
+  const [isCompressing, setIsCompressing] = useState(false);
+  const [imageError, setImageError] = useState<string | null>(null);
+  const [lightboxUrl, setLightboxUrl] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const [currentAiConfig, setCurrentAiConfig] = useState<AiEngineConfig>(
     aiConfig || {
@@ -219,15 +234,80 @@ export function CanvasCopilotDrawer({
     }
   };
 
+  const [isDraggingOver, setIsDraggingOver] = useState(false);
+
+  const handleProcessImageFile = async (file: File) => {
+    setImageError(null);
+    if (!isValidImageMimeType(file.type)) {
+      setImageError("Formato no compatible. Por favor sube una imagen válida (PNG, JPG, WebP)");
+      return;
+    }
+    try {
+      setIsCompressing(true);
+      const compressed = await compressImageToJpeg(file, 1280, 0.8);
+      setAttachedImage(compressed);
+    } catch (err: any) {
+      setImageError(err.message || "Error al procesar y comprimir la imagen.");
+    } finally {
+      setIsCompressing(false);
+    }
+  };
+
+  const handlePaste = (e: React.ClipboardEvent) => {
+    const items = e.clipboardData?.items;
+    if (!items) return;
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i];
+      if (item.type && item.type.startsWith("image/")) {
+        const file = item.getAsFile();
+        if (file) {
+          e.preventDefault();
+          handleProcessImageFile(file);
+          break;
+        }
+      }
+    }
+  };
+
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDraggingOver(true);
+  };
+
+  const handleDragLeave = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDraggingOver(false);
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDraggingOver(false);
+    const files = e.dataTransfer.files;
+    if (files && files.length > 0) {
+      handleProcessImageFile(files[0]);
+    }
+  };
+
   const handleSend = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
     const text = inputText.trim();
-    if (!text || isLoading || isSendingRef.current) return;
+    if ((!text && !attachedImage) || isLoading || isSendingRef.current || isCompressing) return;
 
     isSendingRef.current = true;
+    const imgToSend = attachedImage;
+    const textToSend = text || "Analiza la imagen adjunta";
     setInputText("");
+    setAttachedImage(null);
     try {
-      await onSendMessage(text, mode);
+      await onSendMessage(textToSend, mode, imgToSend);
+    } catch (sendError) {
+      // Si el envío falla, restaurar el texto y la imagen para que el usuario no pierda su trabajo
+      setInputText(text);
+      setAttachedImage(imgToSend);
+      throw sendError;
     } finally {
       isSendingRef.current = false;
     }
@@ -410,6 +490,20 @@ export function CanvasCopilotDrawer({
                       <MarkdownPreview content={msg.content} />
                     )}
 
+                    {/* Renderizado de Imagen Adjunta en Mensaje (Spec 07) */}
+                    {(msg.imageUrl || msg.attachmentThumbnail) && (
+                      <div className="mt-2 overflow-hidden rounded-lg border border-slate-300/60 bg-black/5 max-w-[240px]">
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img
+                          src={resolveImageUrl(msg.imageUrl || msg.attachmentThumbnail!)}
+                          alt="Imagen adjunta al diagrama"
+                          className="max-h-40 w-auto object-cover cursor-pointer hover:opacity-90 transition-opacity"
+                          onClick={() => setLightboxUrl(resolveImageUrl(msg.imageUrl || msg.attachmentThumbnail!))}
+                          title="Clic para ampliar en alta resolución"
+                        />
+                      </div>
+                    )}
+
                     {/* Acciones interactivas de propuesta en Modo Editor */}
                     {!isUser && hasProposal && (
                       <div className="mt-3 pt-2.5 border-t border-slate-200/80">
@@ -556,8 +650,23 @@ export function CanvasCopilotDrawer({
         </div>
       )}
 
-      {/* Área de Entrada y Selector de Modo */}
-      <form onSubmit={handleSend} className="p-3 bg-slate-50 border-t border-slate-200 space-y-2">
+      {/* Área de Entrada y Selector de Modo con soporte Drag & Drop (Escenario 4) */}
+      <form
+        onSubmit={handleSend}
+        onDragOver={handleDragOver}
+        onDragLeave={handleDragLeave}
+        onDrop={handleDrop}
+        className="p-3 bg-slate-50 border-t border-slate-200 space-y-2 relative"
+      >
+        {/* Overlay de arrastre de archivo */}
+        {isDraggingOver && (
+          <div className="absolute inset-0 z-30 bg-indigo-600/90 backdrop-blur-xs flex flex-col items-center justify-center text-white rounded-t-none animate-in fade-in duration-150 border-2 border-dashed border-white m-1">
+            <ImageIcon className="w-8 h-8 animate-bounce mb-1" />
+            <p className="text-xs font-bold">Suelta tu imagen o captura aquí</p>
+            <p className="text-[10px] text-indigo-200">Se comprimirá automáticamente a JPG optimizado</p>
+          </div>
+        )}
+
         {/* Selector de Modo (Modo Chat vs Modo Editor) */}
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-1 bg-slate-200/80 p-0.5 rounded-lg text-[11px] font-semibold">
@@ -592,27 +701,109 @@ export function CanvasCopilotDrawer({
           </span>
         </div>
 
-        {/* Input Textarea + Botones de Acción */}
+        {/* Alerta de archivo no compatible o error de compresión (RF-07.1.2, SC-4) */}
+        {imageError && (
+          <div className="p-2 rounded-lg bg-rose-50 border border-rose-200 text-rose-700 text-xs flex items-center justify-between animate-in fade-in">
+            <div className="flex items-center gap-1.5">
+              <AlertCircle className="w-3.5 h-3.5 shrink-0 text-rose-600" />
+              <span>{imageError}</span>
+            </div>
+            <button
+              type="button"
+              onClick={() => setImageError(null)}
+              className="p-0.5 text-rose-500 hover:text-rose-800 transition-colors cursor-pointer"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        )}
+
+        {/* Thumbnail Chip de Imagen Adjunta con botón de descarte (RF-07.1.2, RB-07.1) */}
+        {attachedImage && (
+          <div className="flex items-center justify-between p-2 rounded-xl bg-indigo-50/90 border border-indigo-200/80 text-xs shadow-xs animate-in fade-in">
+            <div className="flex items-center gap-2.5 truncate">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={attachedImage.dataUrl}
+                alt="Vista previa adjunta"
+                className="w-11 h-11 object-cover rounded-lg border border-indigo-300 shadow-xs cursor-pointer hover:opacity-90 transition-opacity"
+                onClick={() => setLightboxUrl(attachedImage.dataUrl)}
+                title="Clic para ver ampliación"
+              />
+              <div className="truncate">
+                <p className="font-semibold text-indigo-950 truncate max-w-[220px]">
+                  {attachedImage.file.name}
+                </p>
+                <p className="text-[10px] text-indigo-600 font-medium">
+                  {Math.round(attachedImage.sizeBytes / 1024)} KB · JPG {attachedImage.width}x{attachedImage.height}px
+                </p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => setAttachedImage(null)}
+              className="p-1 rounded-md text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors cursor-pointer"
+              title="Descartar imagen"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        )}
+
+        {/* Input Textarea + Botones de Acción + Soporte Ctrl+V */}
         <div className="relative flex items-end gap-1.5 bg-white rounded-xl border border-slate-300 focus-within:border-indigo-600 focus-within:ring-2 focus-within:ring-indigo-100 p-1.5 transition-all">
+          {/* Input de archivo oculto */}
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/png,image/jpeg,image/jpg,image/webp"
+            className="hidden"
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              if (file) handleProcessImageFile(file);
+              e.target.value = "";
+            }}
+          />
+
           <textarea
             value={inputText}
             onChange={(e) => setInputText(e.target.value)}
             onKeyDown={handleKeyDown}
+            onPaste={handlePaste}
             placeholder={
               mode === "CHAT"
-                ? "Pregunta sobre el diagrama, normalización o arquitectura..."
-                : "Ej: Agrega la clase Pago con total double y asóciala a Pedido..."
+                ? "Pregunta sobre el diagrama, o adjunta un boceto/captura..."
+                : "Ej: Agrega la clase Pago con total double, o adjunta una imagen..."
             }
             rows={2}
             className="w-full resize-none bg-transparent text-xs text-slate-800 placeholder-slate-400 focus:outline-none p-1.5"
-            disabled={isLoading}
+            disabled={isLoading || isCompressing}
           />
+
+          {/* Botón de Adjuntar Imagen */}
+          <button
+            type="button"
+            onClick={() => fileInputRef.current?.click()}
+            disabled={isLoading || isCompressing}
+            className={`p-2 rounded-lg transition-colors cursor-pointer ${
+              attachedImage
+                ? "bg-indigo-50 text-indigo-600"
+                : "text-slate-400 hover:text-indigo-600 hover:bg-slate-100"
+            }`}
+            title="Adjuntar imagen, captura o foto de diagrama (o pega con Ctrl+V)"
+          >
+            {isCompressing ? (
+              <Loader2 className="w-4 h-4 animate-spin text-indigo-600" />
+            ) : (
+              <ImageIcon className="w-4 h-4" />
+            )}
+          </button>
 
           {/* Botón de Micrófono */}
           <button
             type="button"
             onClick={toggleListening}
-            className={`p-2 rounded-lg transition-colors ${
+            className={`p-2 rounded-lg transition-colors cursor-pointer ${
               isListening
                 ? "bg-rose-500 text-white animate-pulse"
                 : "text-slate-400 hover:text-slate-600 hover:bg-slate-100"
@@ -625,8 +816,8 @@ export function CanvasCopilotDrawer({
           {/* Botón de Envío */}
           <button
             type="submit"
-            disabled={!inputText.trim() || isLoading}
-            className="p-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white disabled:opacity-40 disabled:hover:bg-indigo-600 transition-colors shadow-xs"
+            disabled={(!inputText.trim() && !attachedImage) || isLoading || isCompressing}
+            className="p-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white disabled:opacity-40 disabled:hover:bg-indigo-600 transition-colors shadow-xs cursor-pointer"
             title="Enviar mensaje"
           >
             {isLoading ? (
@@ -638,6 +829,13 @@ export function CanvasCopilotDrawer({
         </div>
       </form>
     </aside>
+
+    {/* Visor Modal de Imágenes en Alta Resolución (Spec 07) */}
+    <ImageLightboxModal
+      isOpen={Boolean(lightboxUrl)}
+      imageUrl={lightboxUrl}
+      onClose={() => setLightboxUrl(null)}
+    />
 
     {isSettingsModalOpen && (
       <AiEngineSettingsModal

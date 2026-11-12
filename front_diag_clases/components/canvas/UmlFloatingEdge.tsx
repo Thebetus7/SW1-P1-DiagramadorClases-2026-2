@@ -18,8 +18,6 @@ function UmlFloatingEdgeComponent({
   sourceY: defaultSourceY,
   targetX: defaultTargetX,
   targetY: defaultTargetY,
-  sourcePosition: defaultSourcePos,
-  targetPosition: defaultTargetPos,
   style = {},
   data,
   selected,
@@ -64,11 +62,12 @@ function UmlFloatingEdgeComponent({
     y: ty - uy * 28 + ny * 14,
   };
 
-  const edgeData = data as UmlEdgeData | undefined;
-  const relType: UmlRelationType = edgeData?.relationType || "ASSOCIATION";
+  const edgeData = data as (UmlEdgeData & { isAssociationClass?: boolean }) | undefined;
+  const relType = ((edgeData?.relationType as string) || "ASSOCIATION").toUpperCase();
   const sourceMultiplicity = edgeData?.sourceMultiplicity;
   const targetMultiplicity = edgeData?.targetMultiplicity;
   const relationName = edgeData?.name;
+  const isAssociationClass = Boolean((edgeData as any)?.isAssociationClass);
 
   // Marcadores según tipo de relación UML 2.5
   let markerStart: string | undefined = undefined;
@@ -108,6 +107,11 @@ function UmlFloatingEdgeComponent({
     case "ASSOCIATION":
     default:
       break;
+  }
+
+  // Si es una relación vinculada a una clase-asociación, trazar línea discontinua UML 2.5
+  if (isAssociationClass && !strokeDasharray) {
+    strokeDasharray = "5 4";
   }
 
   return (
@@ -154,7 +158,7 @@ function UmlFloatingEdgeComponent({
         />
       )}
 
-      {/* 4. Multiplicidades y etiquetas orientadas */}
+      {/* 4. Multiplicidades y etiquetas orientadas con estilo ortogonal Enterprise Architect */}
       <EdgeLabelRenderer>
         {sourceMultiplicity && (
           <div
@@ -163,7 +167,7 @@ function UmlFloatingEdgeComponent({
               transform: `translate(-50%, -50%) translate(${sourceLabelPos.x}px, ${sourceLabelPos.y}px)`,
               pointerEvents: "none",
             }}
-            className="px-1 py-0.5 text-[11px] font-mono font-semibold bg-white/90 border border-slate-200 text-slate-700 rounded shadow-2xs z-10"
+            className="px-1 py-0.5 text-[11px] font-mono font-semibold bg-white/95 border border-slate-300 text-slate-700 rounded-none shadow-2xs z-10"
           >
             {sourceMultiplicity}
           </div>
@@ -176,7 +180,7 @@ function UmlFloatingEdgeComponent({
               transform: `translate(-50%, -50%) translate(${targetLabelPos.x}px, ${targetLabelPos.y}px)`,
               pointerEvents: "none",
             }}
-            className="px-1 py-0.5 text-[11px] font-mono font-semibold bg-white/90 border border-slate-200 text-slate-700 rounded shadow-2xs z-10"
+            className="px-1 py-0.5 text-[11px] font-mono font-semibold bg-white/95 border border-slate-300 text-slate-700 rounded-none shadow-2xs z-10"
           >
             {targetMultiplicity}
           </div>
@@ -189,7 +193,7 @@ function UmlFloatingEdgeComponent({
               transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY}px)`,
               pointerEvents: "none",
             }}
-            className="px-1.5 py-0.5 text-[10px] font-sans font-medium bg-white/95 border border-slate-300 text-slate-800 rounded shadow-xs z-10"
+            className="px-1.5 py-0.5 text-[10px] font-sans font-medium bg-white/95 border border-slate-300 text-slate-800 rounded-none shadow-xs z-10"
           >
             {relationName}
           </div>

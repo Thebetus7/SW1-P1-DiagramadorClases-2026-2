@@ -49,11 +49,11 @@ Queda estrictamente prohibido introducir tecnologías o librerías adicionales q
 ### 3.2 Frontend
 * **Runtime / Framework**: Node.js 20+ con Next.js 16 (App Router) y React 19.
 * **Lenguaje**: TypeScript 5 con tipado estricto.
-* **Motor de Diagramación Visual**: `@xyflow/react` (React Flow v12).
-* **Estilos y Diseño**: Tailwind CSS v4 con variables CSS nativas y diseño dark/light responsivo.
+* **Motor de Diagramación Visual**: `@xyflow/react` (React Flow v12) bajo estándar gráfico estricto de **Enterprise Architect** y **UML 2.5** (clasificadores con esquinas cuadradas vivas de 90° `rounded-none`, cabecera formal con estereotipos `« »`, clases abstractas con nombre en cursiva *italic*, y aristas ortogonales con radio de curvatura de 0px sin esquinas redondeadas).
+* **Estilos y Diseño**: Tailwind CSS v4 con variables CSS nativas y diseño formal técnico sobrio.
 * **Comunicación en Tiempo Real**: `@stomp/stompjs` v7 y `sockjs-client`.
 * **Utilidades de Archivos y XML**: `jszip` para empaquetado de código y `@xmldom/xmldom` para manipulación de árboles XMI.
-* **Inteligencia Artificial**: Google Gemini API (Modelos `gemini-1.5-flash` / `gemini-2.0-flash` vía REST API directo).
+* **Inteligencia Artificial Multimodal**: Google Gemini API (Modelos `gemini-1.5-flash` / `gemini-2.0-flash` / `gemini-2.5-flash` vía REST API directo) con capacidad multimodal de visión y texto para procesamiento de bocetos y capturas de diagramas en vivo.
 
 ### 3.3 Infraestructura y DevOps
 * **Contenedores**: Docker y Docker Compose multi-etapa (*multi-stage builds*).
@@ -112,6 +112,11 @@ Queda estrictamente prohibido introducir tecnologías o librerías adicionales q
        ]
      }
      ```
+4. **Contrato de Copilot IA Multimodal y Persistencia de Activos Gráficos**:
+   * El panel conversacional `CanvasCopilotDrawer` admite mensajes con imágenes adjuntas (capturas o bocetos).
+   * **Compresión Previa**: Toda imagen adjunta es comprimida en el cliente a formato JPG ligero (máx. 1280px) para mitigar el consumo de red y prevenir sobrecargas en el broker STOMP.
+   * **Almacenamiento en Proyecto**: Los archivos JPG se archivan en el directorio de activos del diagrama/proyecto (`/uploads/diagrams/{id}/` o almacenamiento compatible MinIO/S3) y se referencian mediante su URL en el atributo `imageUrl` de `ChatMessage`.
+   * **Principio de Fusión Contextual (MERGE por Defecto)**: En Modo `EDITOR`, las propuestas de edición generadas a partir de imágenes preservan la totalidad de las clases preexistentes en el lienzo, proyectando exclusivamente deltas de adición o modificación sin alterar el trabajo existente salvo comando explícito del usuario.
 
 ---
 

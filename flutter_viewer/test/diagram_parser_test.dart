@@ -26,6 +26,7 @@ void main() {
       expect(node.id, equals('class-1'));
       expect(node.name, equals('Usuario'));
       expect(node.stereotype, equals('entity'));
+      expect(node.isAbstract, isFalse);
       expect(node.x, equals(150.0));
       expect(node.y, equals(280.0));
       expect(node.attributes.length, equals(2));
@@ -35,7 +36,89 @@ void main() {
       expect(node.methods[0], equals('+ autenticar(token: String): Boolean'));
     });
 
-    test('UmlEdge deserializa aristas y relaciones UML correctamente', () {
+    test('UmlClassNode detecta clase abstracta mediante stereotype o isAbstract flag (Spec 06, UML 2.5)', () {
+      final jsonAbstract = {
+        'id': 'class-abs-1',
+        'type': 'umlClass',
+        'position': {'x': 100.0, 'y': 100.0},
+        'data': {
+          'name': 'Vehiculo',
+          'stereotype': '<<abstract>>',
+          'attributes': ['+ placa: String'],
+          'methods': ['+ acelerar(): void']
+        }
+      };
+
+      final node = UmlClassNode.fromJson(jsonAbstract);
+      expect(node.name, equals('Vehiculo'));
+      expect(node.stereotype, equals('abstract'));
+      expect(node.isAbstract, isTrue);
+
+      // Verificación de tolerancia a corchete simple < > y guillemets « » (RB-06.4)
+      final jsonSimpleBracket = {
+        'id': 'class-single-bracket',
+        'type': 'umlClass',
+        'position': {'x': 100.0, 'y': 100.0},
+        'data': {
+          'name': 'Repositorio',
+          'stereotype': '<interface>',
+          'attributes': [],
+          'methods': []
+        }
+      };
+      final nodeSimple = UmlClassNode.fromJson(jsonSimpleBracket);
+      expect(nodeSimple.stereotype, equals('interface'));
+
+      final jsonGuillemets = {
+        'id': 'class-guill',
+        'type': 'umlClass',
+        'position': {'x': 100.0, 'y': 100.0},
+        'data': {
+          'name': 'EntidadBase',
+          'stereotype': '«entity»',
+          'attributes': [],
+          'methods': []
+        }
+      };
+      final nodeGuill = UmlClassNode.fromJson(jsonGuillemets);
+      expect(nodeGuill.stereotype, equals('entity'));
+
+      final jsonAbstractFlag = {
+        'id': 'class-abs-2',
+        'type': 'umlClass',
+        'position': {'x': 100.0, 'y': 100.0},
+        'data': {
+          'name': 'FiguraGeometrica',
+          'isAbstract': true,
+          'attributes': [],
+          'methods': ['+ calcularArea(): Double']
+        }
+      };
+
+      final node2 = UmlClassNode.fromJson(jsonAbstractFlag);
+      expect(node2.name, equals('FiguraGeometrica'));
+      expect(node2.isAbstract, isTrue);
+    });
+
+    test('UmlNoteNode deserializa correctamente notas explicativas (Spec 06, RF-06.5.1)', () {
+      final jsonNote = {
+        'id': 'note-1',
+        'type': 'umlNote',
+        'position': {'x': 320.0, 'y': 140.0},
+        'data': {
+          'content': 'Regla de negocio: la factura debe incluir IVA.'
+        }
+      };
+
+      final note = UmlNoteNode.fromJson(jsonNote);
+      expect(note.id, equals('note-1'));
+      expect(note.type, equals('umlNote'));
+      expect(note.x, equals(320.0));
+      expect(note.y, equals(140.0));
+      expect(note.content, equals('Regla de negocio: la factura debe incluir IVA.'));
+    });
+
+    test('UmlEdge deserializa aristas, relaciones y clase-asociacion UML correctamente', () {
       final jsonEdge = {
         'id': 'edge-1-2',
         'source': 'class-1',
@@ -43,7 +126,8 @@ void main() {
         'data': {
           'relationType': 'INHERITANCE',
           'sourceMultiplicity': '1',
-          'targetMultiplicity': '0..*'
+          'targetMultiplicity': '0..*',
+          'isAssociationClass': true,
         }
       };
 
@@ -55,15 +139,23 @@ void main() {
       expect(edge.relationType, equals('INHERITANCE'));
       expect(edge.sourceMultiplicity, equals('1'));
       expect(edge.targetMultiplicity, equals('0..*'));
+      expect(edge.isAssociationClass, isTrue);
     });
 
-    test('DiagramCanvasData parsea un lienzo completo con nodos y aristas', () {
+    test('DiagramCanvasData segrega polimorficamente clases y notas (Spec 06, RB-06.7)', () {
       final canvasJson = {
         'nodes': [
           {
             'id': 'class-order',
+            'type': 'umlClass',
             'position': {'x': 50.0, 'y': 80.0},
             'data': {'name': 'Order', 'attributes': ['+ total: Double'], 'methods': []}
+          },
+          {
+            'id': 'note-tax',
+            'type': 'umlNote',
+            'position': {'x': 300.0, 'y': 80.0},
+            'data': {'content': 'Tarifa impositiva 2026'}
           }
         ],
         'edges': [
@@ -81,8 +173,41 @@ void main() {
       expect(diagram.diagramName, equals('Sistema de Pedidos'));
       expect(diagram.nodes.length, equals(1));
       expect(diagram.nodes.first.name, equals('Order'));
+      expect(diagram.notes.length, equals(1));
+      expect(diagram.notes.first.content, equals('Tarifa impositiva 2026'));
+      expect(diagram.allNodes.length, equals(2));
       expect(diagram.edges.length, equals(1));
       expect(diagram.edges.first.relationType, equals('ASSOCIATION'));
+
+      // Comprobar mapa de nombres legibles para inspección táctil (ClassDetailBottomSheet)
+      expect(diagram.nodeNames['class-order'], equals('Order'));
+      expect(diagram.nodeNames['note-tax'], contains('Nota: Tarifa impositiva'));
+    });
+
+    test('DiagramCanvasData soporta mapas dinámicos Map<dynamic, dynamic> sin descartar nodos', () {
+      final dynamicJson = <dynamic, dynamic>{
+        'nodes': <dynamic>[
+          <dynamic, dynamic>{
+            'id': 'c1',
+            'type': 'umlClass',
+            'position': <dynamic, dynamic>{'x': 10, 'y': 20},
+            'data': <dynamic, dynamic>{'name': 'Dinamico', 'attributes': <dynamic>[], 'methods': <dynamic>[]}
+          }
+        ],
+        'edges': <dynamic>[
+          <dynamic, dynamic>{
+            'id': 'e1',
+            'source': 'c1',
+            'target': 'c2',
+            'data': <dynamic, dynamic>{'relationType': 'ASSOCIATION'}
+          }
+        ]
+      };
+
+      final parsed = DiagramCanvasData.fromJson(Map<String, dynamic>.from(dynamicJson), 'Test Dinamico');
+      expect(parsed.nodes.length, equals(1));
+      expect(parsed.nodes.first.name, equals('Dinamico'));
+      expect(parsed.edges.length, equals(1));
     });
 
     test('Extracción robusta de ID de diagrama y resolución de host local (10.0.2.2:8080) vs online', () {

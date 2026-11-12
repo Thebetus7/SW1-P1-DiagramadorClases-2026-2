@@ -90,6 +90,7 @@ export interface UmlClassData {
   attributes: (UmlAttribute | string)[];
   methods: (UmlMethod | string)[];
   isHighlighted?: boolean;
+  isAbstract?: boolean;
 }
 
 export interface UmlNoteData {
@@ -138,6 +139,8 @@ export interface ChatProposalPayload {
   edgesDelta?: any[];
   status?: ProposalStatus;
   affectedNodeIds?: string[];
+  sourceImageId?: string;
+  mergeStrategy?: "MERGE" | "REPLACE";
   resolvedByUserId?: number | null;
   resolvedByUserName?: string | null;
   resolvedAt?: string | null;
@@ -152,6 +155,10 @@ export interface ChatMessage {
   mode: CopilotMode;
   messageType: ChatMessageType;
   content: string;
+  imageUrl?: string | null;
+  attachmentThumbnail?: string | null;
+  attachmentMimeType?: string | null;
+  sourceImageId?: string | null;
   taggedUserName?: string | null;
   proposalJson?: string | null;
   proposal?: ChatProposalPayload | null;

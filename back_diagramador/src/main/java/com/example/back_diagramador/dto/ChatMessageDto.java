@@ -22,6 +22,11 @@ public class ChatMessageDto {
     private String content;
     private String taggedUserName;
 
+    private String imageUrl;
+    private String attachmentMimeType;
+    private String attachmentThumbnail;
+    private String sourceImageId;
+
     private String proposalJson;
     private String proposalStatus; // "PENDING", "ACCEPTED", "IGNORED", "EXPIRED"
     private Long resolvedByUserId;

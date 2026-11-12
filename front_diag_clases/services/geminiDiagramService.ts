@@ -8,6 +8,11 @@ export interface AiDiagramResult {
   explanation: string;
 }
 
+export interface ImageAttachmentData {
+  base64Data: string;
+  mimeType: string;
+}
+
 const DEFAULT_GEMINI_API_KEY =
   process.env.NEXT_PUBLIC_GEMINI_API_KEY ||
   process.env.GEMINI_API_KEY ||
@@ -688,6 +693,363 @@ Genera el JSON resultante con la estructura solicitada.`;
   throw lastError || new Error("No se pudo procesar la solicitud con Gemini AI.");
 }
 
+function getAttributeName(attr: any): string {
+  if (typeof attr === "string") {
+    const clean = attr.replace(/^[+\-#~]\s*/, "").split(":")[0].trim();
+    return clean.toLowerCase();
+  }
+  return String(attr?.name || "").toLowerCase().trim();
+}
+
+function getMethodName(meth: any): string {
+  if (typeof meth === "string") {
+    const clean = meth.replace(/^[+\-#~]\s*/, "").split("(")[0].trim();
+    return clean.toLowerCase();
+  }
+  return String(meth?.name || "").toLowerCase().trim();
+}
+
+export function mergeAttributes(existing: any[], incoming: any[]): any[] {
+  const result = [...existing];
+  const existingNames = new Set(existing.map(getAttributeName).filter(Boolean));
+
+  for (const item of incoming) {
+    const name = getAttributeName(item);
+    if (name && !existingNames.has(name)) {
+      existingNames.add(name);
+      result.push(item);
+    }
+  }
+  return result;
+}
+
+export function mergeMethods(existing: any[], incoming: any[]): any[] {
+  const result = [...existing];
+  const existingNames = new Set(existing.map(getMethodName).filter(Boolean));
+
+  for (const item of incoming) {
+    const name = getMethodName(item);
+    if (name && !existingNames.has(name)) {
+      existingNames.add(name);
+      result.push(item);
+    }
+  }
+  return result;
+}
+
+/**
+ * Aplica la estrategia de FUSIÓN CONTEXTUAL (MERGE por defecto) y cálculo de layout espacial
+ * para integrar los elementos reconocidos de una imagen preservando el 100% de las entidades
+ * y evitando solapamientos espaciales respecto al bounding box actual (RB-07.4 y RB-07.5).
+ */
+export function applyMultimodalMergeLayout(
+  existingNodes: Node[],
+  existingEdges: Edge[],
+  extractedNodes: Node[],
+  extractedEdges: Edge[]
+): { nodes: Node[]; edges: Edge[] } {
+  // 1. Preservar 100% de las entidades existentes (RB-07.4)
+  const mergedNodes: Node[] = existingNodes.map((n) => ({ ...n }));
+  const existingNodeIds = new Set(existingNodes.map((n) => n.id.toLowerCase().trim()));
+  const existingNodeNames = new Set(
+    existingNodes
+      .map((n) => ((n.data as any)?.name || "").toString().toLowerCase().trim())
+      .filter(Boolean)
+  );
+
+  // 2. Calcular Bounding Box de los nodos existentes
+  let maxX = 0;
+  let minY = Infinity;
+  if (existingNodes.length > 0) {
+    for (const n of existingNodes) {
+      const estimatedWidth = (n.measured?.width ?? (n as any).width ?? 220);
+      const rightEdge = n.position.x + estimatedWidth;
+      if (rightEdge > maxX) maxX = rightEdge;
+      if (n.position.y < minY) minY = n.position.y;
+    }
+  }
+  if (minY === Infinity) minY = 80;
+
+  // 3. Procesar y posicionar los nodos extraídos de la imagen
+  let newIndex = 0;
+  const idRemap = new Map<string, string>();
+
+  for (const extracted of extractedNodes) {
+    const rawId = (extracted.id || "").toString().toLowerCase().trim();
+    const rawName = ((extracted.data as any)?.name || (extracted as any).name || "").toString().toLowerCase().trim();
+
+    const idExists = rawId && existingNodeIds.has(rawId);
+    const nameExists = rawName && existingNodeNames.has(rawName);
+
+    if (idExists || nameExists) {
+      // Clase ya existente: fusionar miembros sin duplicar el nodo ni modificar su posición preexistente
+      const existingMatch = mergedNodes.find((n) => {
+        const matchId = n.id.toLowerCase().trim();
+        const matchName = ((n.data as any)?.name || "").toString().toLowerCase().trim();
+        return matchId === rawId || (rawName && matchName === rawName);
+      });
+
+      if (existingMatch) {
+        idRemap.set(extracted.id, existingMatch.id);
+        const existingAttrs = (existingMatch.data as any)?.attributes || [];
+        const incomingAttrs = (extracted.data as any)?.attributes || (extracted as any).attributes || [];
+        const existingMethods = (existingMatch.data as any)?.methods || [];
+        const incomingMethods = (extracted.data as any)?.methods || (extracted as any).methods || [];
+
+        existingMatch.data = {
+          ...existingMatch.data,
+          attributes: mergeAttributes(existingAttrs, incomingAttrs),
+          methods: mergeMethods(existingMethods, incomingMethods),
+        };
+      }
+    } else {
+      // Clase genuinamente nueva deducida de la imagen: calcular posición adyacente libre (RB-07.5)
+      const offsetX = (maxX > 0 ? maxX + 100 : 80) + (newIndex % 2) * 320;
+      const offsetY = minY + Math.floor(newIndex / 2) * 260;
+
+      const newId = extracted.id && (extracted.id.startsWith("class-") || extracted.id.startsWith("note-"))
+        ? extracted.id
+        : `class-img-${Date.now()}-${newIndex}`;
+      idRemap.set(extracted.id, newId);
+
+      mergedNodes.push({
+        ...extracted,
+        id: newId,
+        position: { x: offsetX, y: offsetY },
+        data: {
+          ...extracted.data,
+          isHighlighted: true,
+        },
+      });
+      newIndex++;
+    }
+  }
+
+  // 4. Preservar y fusionar aristas / relaciones
+  const mergedEdges: Edge[] = existingEdges.map((e) => ({ ...e }));
+  const existingEdgeKeys = new Set(
+    existingEdges.map((e) => `${e.source}->${e.target}:${(e.data as any)?.relationType || "ASSOCIATION"}`)
+  );
+  const existingEdgeIds = new Set(existingEdges.map((e) => e.id));
+
+  for (const edge of extractedEdges) {
+    const source = idRemap.get(edge.source) || edge.source;
+    const target = idRemap.get(edge.target) || edge.target;
+    const relType = (edge.data as any)?.relationType || "ASSOCIATION";
+    const key = `${source}->${target}:${relType}`;
+
+    if (!existingEdgeKeys.has(key) && !existingEdgeIds.has(edge.id)) {
+      existingEdgeKeys.add(key);
+      mergedEdges.push({
+        ...edge,
+        source,
+        target,
+        data: {
+          ...edge.data,
+          relationType: relType,
+        },
+      });
+    }
+  }
+
+  return { nodes: mergedNodes, edges: mergedEdges };
+}
+
+/**
+ * Procesa una imagen adjunta de diagrama o boceto en Modo EDITOR con Gemini Vision,
+ * aplicando estrictamente la estrategia de FUSIÓN CONTEXTUAL (MERGE por defecto)
+ * para preservar el 100% de las clases y relaciones preexistentes (RB-07.4 y RB-07.5).
+ */
+export async function processMultimodalDiagramWithGemini(
+  prompt: string,
+  imageAttachment: ImageAttachmentData,
+  currentNodes: Node[],
+  currentEdges: Edge[],
+  diagramName: string = "diagrama",
+  apiKey: string = DEFAULT_GEMINI_API_KEY,
+  chatHistory?: ChatMessage[]
+): Promise<AiDiagramResult> {
+  if (!apiKey) {
+    throw new Error("No se ha configurado la API Key de Gemini.");
+  }
+
+  const currentDiagramState = {
+    diagramName,
+    nodes: currentNodes.map((n) => ({
+      id: n.id,
+      type: n.type || "umlClass",
+      position: n.position,
+      data: {
+        name: (n.data as any)?.name || "",
+        stereotype: (n.data as any)?.stereotype || "",
+        attributes: (n.data as any)?.attributes || [],
+        methods: (n.data as any)?.methods || [],
+        content: (n.data as any)?.content || "",
+      },
+    })),
+    edges: currentEdges.map((e) => ({
+      id: e.id,
+      source: e.source,
+      target: e.target,
+      sourceHandle: e.sourceHandle || "bottom-source",
+      targetHandle: e.targetHandle || "top-target",
+      type: "umlEdge",
+      data: {
+        relationType: (e.data as any)?.relationType || "ASSOCIATION",
+        sourceMultiplicity: (e.data as any)?.sourceMultiplicity || "",
+        targetMultiplicity: (e.data as any)?.targetMultiplicity || "",
+        name: (e.data as any)?.name || (e.data as any)?.label || "",
+      },
+    })),
+  };
+
+  const systemInstruction = `
+Eres un Arquitecto de Software y Especialista en Visión Artificial y Modelado UML 2.5 para un Diagramador de Clases interactivo.
+El usuario ha adjuntado una imagen (captura de pantalla, foto de pizarra o boceto) y una directiva para enriquecer su modelo UML actual.
+
+### DIRECTIVAS OBLIGATORIAS DE FUSIÓN CONTEXTUAL (MERGE POR DEFECTO - RB-07.4):
+1. PRESERVACIÓN ESTRICTA DEL TRABAJO PREVIO: No elimines ni alteres las clases o relaciones que ya existen en el diagrama, a menos que el usuario lo solicite taxativamente con comandos como 'borra' o 'reemplaza todo'. Conserva íntegramente los nombres, atributos y relaciones preexistentes.
+2. EXTRACCIÓN Y FUSIÓN DE NUEVAS ENTIDADES: Identifica en la imagen los clasificadores, atributos, métodos o relaciones adicionales que complementen el modelo. Si una clase de la imagen coincide con una existente, complementa sus miembros sin borrar los que ya estaban.
+3. PREVENCIÓN DE SOLAPAMIENTO ESPACIAL (RB-07.5): Posiciona los clasificadores deducidos de la imagen en coordenadas adyacentes libres (desplazadas en el eje X hacia la derecha o en el eje Y hacia abajo respecto a los nodos existentes) para que no se superpongan directamente encima de las clases preexistentes.
+4. ESTÁNDAR UML 2.5:
+   - Clases (type: "umlClass"): Nombres en PascalCase, visibilidades (+, -, #, ~), atributos y métodos tipados.
+   - Notas (type: "umlNote"): contenido explicativo.
+   - Relaciones (type: "umlEdge"): ASSOCIATION, GENERALIZATION, COMPOSITION, AGGREGATION, DEPENDENCY, DIRECTED_ASSOCIATION, REALIZATION, ASSOCIATION_CLASS.
+
+### FORMATO JSON REQUERIDO DE RESPUESTA:
+{
+  "explanation": "Propuesta técnica directa en español redactada OBLIGATORIAMENTE en tiempo futuro explicando con precisión qué vas a hacer antes de que se confirme (ej: 'Voy a incorporar la clase Factura extraída de la imagen y la relacionaré con Pedido...'). NUNCA uses tiempo pasado ni digas 'Se agregaron'.",
+  "nodes": [ ...todos los nodos actualizados: los existentes preservados + los nuevos... ],
+  "edges": [ ...todas las relaciones actualizadas: las existentes preservadas + las nuevas... ]
+}
+`;
+
+  const historyContext =
+    chatHistory && chatHistory.length > 0
+      ? `\nMemoria conversacional previa (últimos ${Math.min(chatHistory.length, 8)} mensajes):\n` +
+        chatHistory
+          .slice(-8)
+          .map((m) => {
+            const role = m.senderType === "USER" ? `@${m.userName || "Usuario"}` : "Copilot IA";
+            const text = m.proposal?.summary || m.content;
+            return `- ${role}: ${text}`;
+          })
+          .join("\n") +
+        "\n"
+      : "";
+
+  const userContent = `
+Estado actual del diagrama UML (DEBES PRESERVAR ESTAS ENTIDADES - MERGE):
+${JSON.stringify(currentDiagramState, null, 2)}
+${historyContext}
+Instrucción del usuario con respecto a la imagen adjunta:
+"${prompt || "Analiza la imagen adjunta e incorpora las clases y relaciones nuevas al diagrama actual"}"
+
+Genera el JSON resultante con la estructura solicitada.`;
+
+  let lastError: any = null;
+
+  for (const model of GEMINI_MODELS) {
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        console.log(`🌐 [Gemini API - Visión Multimodal Editor] Consultando '${model}' (intento ${attempt}/3)...`);
+        const editStart = performance.now();
+        const response = await fetch(
+          `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`,
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              contents: [
+                {
+                  role: "user",
+                  parts: [
+                    {
+                      inline_data: {
+                        mime_type: imageAttachment.mimeType || "image/jpeg",
+                        data: imageAttachment.base64Data,
+                      },
+                    },
+                    {
+                      text: `${systemInstruction}\n\n${userContent}`,
+                    },
+                  ],
+                },
+              ],
+              generationConfig: {
+                responseMimeType: "application/json",
+                temperature: 0.2,
+              },
+            }),
+          }
+        );
+
+        const editDuration = ((performance.now() - editStart) / 1000).toFixed(2);
+
+        if (!response.ok) {
+          const errorText = await response.text();
+          if ((response.status === 503 || response.status === 429) && attempt < 3) {
+            console.warn(`⚠️ [Gemini API] '${model}' respondió ${response.status} en ${editDuration}s. Reintentando en ${attempt * 800}ms...`);
+            await sleep(attempt * 800);
+            continue;
+          }
+          console.warn(`⚠️ [Gemini API] '${model}' respondió ${response.status} en ${editDuration}s, probando modelo alternativo...`, errorText);
+          lastError = new Error(`Error (${model}): ${response.statusText} - ${errorText}`);
+          break;
+        }
+
+        console.log(`✨ [Gemini API - Visión Multimodal Editor] Modelo '${model}' procesó imagen y generó estructura JSON en ${editDuration}s`);
+        const responseData = await response.json();
+        const rawText =
+          responseData.candidates?.[0]?.content?.parts?.[0]?.text || "{}";
+
+        let parsed: any;
+        try {
+          parsed = JSON.parse(rawText);
+        } catch {
+          const cleaned = rawText
+            .replace(/```json/gi, "")
+            .replace(/```/gi, "")
+            .trim();
+          parsed = JSON.parse(cleaned);
+        }
+
+        if (!parsed.nodes || !Array.isArray(parsed.nodes)) {
+          throw new Error("La respuesta de la IA no contiene una lista de nodos válida.");
+        }
+
+        // Normalizar y enriquecer el esquema devuelto por la IA
+        const normalized = normalizeExtractedDiagram(parsed, currentNodes);
+
+        // FUSIÓN CONTEXTUAL DETERMINISTA Y PREVENCIÓN DE SOLAPAMIENTO ESPACIAL (RB-07.4 y RB-07.5)
+        const layoutMerged = applyMultimodalMergeLayout(
+          currentNodes,
+          currentEdges,
+          normalized.nodes,
+          normalized.edges
+        );
+
+        return {
+          nodes: layoutMerged.nodes,
+          edges: layoutMerged.edges,
+          explanation: normalized.explanation,
+        };
+      } catch (err: any) {
+        if (attempt < 3) {
+          await sleep(attempt * 800);
+          continue;
+        }
+        console.warn(`Error procesando multimodal con modelo ${model}:`, err);
+        lastError = err;
+      }
+    }
+  }
+
+  throw lastError || new Error("No se pudo procesar la imagen multimodal con Gemini AI.");
+}
+
 /**
  * Convierte una imagen de un diagrama de clases UML (digital, captura de pantalla, foto de pizarra o boceto a mano)
  * en un diagrama UML 2.5 completo con nodos y aristas normalizados conforme al estándar XMI de Enterprise Architect.
@@ -995,7 +1357,8 @@ export async function chatWithCopilot(
   canvasEdges: Edge[],
   projectName: string,
   customApiKey?: string,
-  chatHistory?: ChatMessage[]
+  chatHistory?: ChatMessage[],
+  imageAttachment?: ImageAttachmentData | null
 ): Promise<CopilotChatResponse> {
   const apiKey = customApiKey || DEFAULT_GEMINI_API_KEY;
   if (!apiKey) {
@@ -1007,7 +1370,26 @@ export async function chatWithCopilot(
   // Si está en modo EDITOR, procesar mutación de diagrama con tiempo futuro y contexto
   if (mode === "EDITOR") {
     try {
-      const result = await processDiagramWithGemini(userText, canvasNodes, canvasEdges, projectName, apiKey, chatHistory);
+      const result =
+        imageAttachment && imageAttachment.base64Data
+          ? await processMultimodalDiagramWithGemini(
+              userText,
+              imageAttachment,
+              canvasNodes,
+              canvasEdges,
+              projectName,
+              apiKey,
+              chatHistory
+            )
+          : await processDiagramWithGemini(
+              userText,
+              canvasNodes,
+              canvasEdges,
+              projectName,
+              apiKey,
+              chatHistory
+            );
+
       return {
         replyText: result.explanation,
         proposal: {
@@ -1015,6 +1397,7 @@ export async function chatWithCopilot(
           nodesDelta: result.nodes,
           edgesDelta: result.edges,
           status: "PENDING",
+          mergeStrategy: "MERGE",
         },
         newNodes: result.nodes,
         newEdges: result.edges,
@@ -1059,6 +1442,23 @@ Consulta del usuario:
 "${userText}"
 `;
 
+  const requestParts: any[] = [];
+  if (imageAttachment && imageAttachment.base64Data) {
+    requestParts.push({
+      inline_data: {
+        mime_type: imageAttachment.mimeType || "image/jpeg",
+        data: imageAttachment.base64Data,
+      },
+    });
+  }
+  requestParts.push({
+    text: `${systemPrompt}\n\n${userPrompt}${
+      imageAttachment && imageAttachment.base64Data
+        ? "\n\nInstrucción adicional multimodal: El usuario ha adjuntado una imagen de soporte (captura, diagrama o boceto). Analiza minuciosamente su contenido visual en relación a la consulta técnica y responde de manera consultiva en Markdown sin generar propuestas de edición ni mutar el lienzo."
+        : ""
+    }`,
+  });
+
   for (const model of GEMINI_MODELS) {
     try {
       console.log(`🌐 [Gemini API] Enviando solicitud a modelo '${model}'...`);
@@ -1070,7 +1470,7 @@ Consulta del usuario:
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             contents: [
-              { role: "user", parts: [{ text: `${systemPrompt}\n\n${userPrompt}` }] }
+              { role: "user", parts: requestParts }
             ],
             generationConfig: { temperature: 0.4 },
           }),

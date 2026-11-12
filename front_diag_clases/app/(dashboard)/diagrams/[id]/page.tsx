@@ -48,6 +48,7 @@ import {
   fetchChatHistory,
   saveChatMessage,
   resolveProposal,
+  uploadDiagramImage,
 } from "@/services/diagramChatService";
 import {
   chatWithCopilot,
@@ -57,6 +58,7 @@ import {
 } from "@/services/geminiDiagramService";
 import { chatWithLocalLlm } from "@/services/webLlmDiagramService";
 import { ChatMessage, ChatProposalPayload, CopilotMode, AiEngineConfig } from "@/types";
+import { CompressedImageResult } from "@/utils/imageCompressor";
 import {
   downloadEnterpriseArchitectXmi,
   generateEnterpriseArchitectXmi,
@@ -1314,13 +1316,39 @@ function DiagramEditorContent() {
   // =========================================================================
 
   // Enviar mensaje al Copilot IA (Modo Chat o Modo Editor) con guardia de concurrencia y deduplicación
-  const handleSendCopilotMessage = async (content: string, mode: CopilotMode) => {
-    if (!diagramId || !currentUser || !content.trim() || isCopilotLoading || isCopilotProcessingRef.current) return;
+  const handleSendCopilotMessage = async (
+    content: string,
+    mode: CopilotMode,
+    imageAttachment?: CompressedImageResult | null
+  ) => {
+    if (
+      !diagramId ||
+      !currentUser ||
+      (!content.trim() && !imageAttachment) ||
+      isCopilotLoading ||
+      isCopilotProcessingRef.current
+    )
+      return;
     isCopilotProcessingRef.current = true;
     setIsCopilotLoading(true);
     setAiQuotaError(null);
 
-    // 1. Crear y persistir mensaje del usuario en MongoDB
+    let uploadedImageUrl: string | null = null;
+    let sourceImageId: string | null = null;
+
+    // Subida física de imagen en backend si existe archivo adjunto (RF-07.1.3, RB-07.3)
+    if (imageAttachment) {
+      try {
+        const uploadRes = await uploadDiagramImage(diagramId, imageAttachment.file);
+        uploadedImageUrl = uploadRes.imageUrl;
+        sourceImageId = uploadRes.filename;
+      } catch (uploadErr: any) {
+        console.warn("No se pudo persistir la imagen en el backend, usando dataUrl local como fallback:", uploadErr);
+        uploadedImageUrl = imageAttachment.dataUrl;
+      }
+    }
+
+    // 1. Crear y persistir mensaje del usuario en base de datos
     const userMsg: Partial<ChatMessage> = {
       diagramId,
       senderType: "USER",
@@ -1328,13 +1356,23 @@ function DiagramEditorContent() {
       userName: currentUser.nombre,
       mode,
       messageType: "CHAT_MESSAGE",
-      content,
+      content: content || "Analiza la imagen adjunta",
+      imageUrl: uploadedImageUrl,
+      attachmentThumbnail: imageAttachment?.dataUrl || uploadedImageUrl,
+      attachmentMimeType: "image/jpeg",
+      sourceImageId,
       isError: false,
       createdAt: new Date().toISOString(),
     };
 
     try {
-      const savedUserMsg = await saveChatMessage(diagramId, userMsg);
+      const savedUserMsg = await saveChatMessage(diagramId, userMsg).catch((err) => {
+        console.warn("Aviso: No se pudo persistir mensaje de usuario en backend, continuando con fallback local:", err);
+        return {
+          ...userMsg,
+          id: `local-user-msg-${Date.now()}`,
+        } as ChatMessage;
+      });
       appendCopilotMessage(savedUserMsg);
 
       // Difundir mensaje de usuario por WebSocket a otros colaboradores
@@ -1354,6 +1392,9 @@ function DiagramEditorContent() {
       );
       console.log(`⏱️ Inicio: ${new Date().toLocaleTimeString()}`);
       console.log(`📝 Mensaje usuario: "${content}"`);
+      if (uploadedImageUrl) {
+        console.log(`🖼️ Imagen adjunta: ${uploadedImageUrl}`);
+      }
       console.log(`🧠 Motor IA: ${aiEngineConfig.provider} ${aiEngineConfig.provider === "WEBLLM_LOCAL" ? `(${aiEngineConfig.localModelId || "Llama-3.2-1B"})` : "(Gemini Cloud)"}`);
       console.log(`📊 Contexto del diagrama:`, {
         totalNodos: nodes.length,
@@ -1364,8 +1405,11 @@ function DiagramEditorContent() {
 
       // 2. Invocar Copilot IA (Gemini 2.5 Flash o WebLLM Llama 3.2 Local según motor activo)
       let aiResponse: { replyText: string; proposal?: any; newNodes?: Node[]; newEdges?: Edge[] };
+      const imgData = imageAttachment
+        ? { base64Data: imageAttachment.base64Data, mimeType: imageAttachment.mimeType }
+        : null;
 
-      if (aiEngineConfig.provider === "WEBLLM_LOCAL") {
+      if (aiEngineConfig.provider === "WEBLLM_LOCAL" && !imgData) {
         try {
           console.log("⚡ Consultando modelo local WebLLM WebGPU...");
           aiResponse = await chatWithLocalLlm(
@@ -1384,25 +1428,27 @@ function DiagramEditorContent() {
           }
           console.warn("Intentando recurrir a Gemini Cloud como respaldo online...");
           aiResponse = await chatWithCopilot(
-            content,
+            content || "Analiza el diagrama",
             mode,
             nodes,
             edges,
             diagram?.nombre || "diagrama",
             undefined,
-            copilotMessages
+            copilotMessages,
+            imgData
           );
         }
       } else {
         console.log("☁️ Consultando Google Gemini Cloud API...");
         aiResponse = await chatWithCopilot(
-          content,
+          content || "Analiza la imagen adjunta",
           mode,
           nodes,
           edges,
           diagram?.nombre || "diagrama",
           undefined,
-          copilotMessages
+          copilotMessages,
+          imgData
         );
       }
 
@@ -1425,11 +1471,18 @@ function DiagramEditorContent() {
         proposal: aiResponse.proposal,
         proposalStatus: aiResponse.proposal ? "PENDING" : undefined,
         proposalJson: aiResponse.proposal ? JSON.stringify(aiResponse.proposal) : undefined,
+        sourceImageId: sourceImageId || undefined,
         isError: false,
         createdAt: new Date().toISOString(),
       };
 
-      const savedCopilotMsg = await saveChatMessage(diagramId, copilotMsg);
+      const savedCopilotMsg = await saveChatMessage(diagramId, copilotMsg).catch((err) => {
+        console.warn("Aviso: No se pudo persistir mensaje de Copilot en backend, continuando con fallback local:", err);
+        return {
+          ...copilotMsg,
+          id: `local-copilot-msg-${Date.now()}`,
+        } as ChatMessage;
+      });
       appendCopilotMessage(savedCopilotMsg);
 
       // Difundir respuesta de Copilot a colaboradores
@@ -1587,8 +1640,25 @@ function DiagramEditorContent() {
         }
       }
 
-      // Actualizar estado en MongoDB
-      const updated = await resolveProposal(diagramId, messageId, "ACCEPTED", currentUser.id, currentUser.nombre);
+      // Actualizar estado en MongoDB / DynamoDB con fallback en memoria
+      const updated = await resolveProposal(
+        diagramId,
+        messageId,
+        "ACCEPTED",
+        currentUser.id,
+        currentUser.nombre
+      ).catch((err) => {
+        console.warn("Aviso: No se pudo persistir resolución en backend, resolviendo en memoria:", err);
+        const originalMsg = copilotMessages.find((m) => m.id === messageId);
+        return {
+          ...(originalMsg || {}),
+          id: messageId,
+          proposalStatus: "ACCEPTED",
+          resolvedByUserId: currentUser.id,
+          resolvedByUserName: currentUser.nombre,
+          resolvedAt: new Date().toISOString(),
+        } as ChatMessage;
+      });
 
       // Actualizar estado local
       setCopilotMessages((prev) =>

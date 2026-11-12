@@ -88,6 +88,10 @@ public class DiagramChatService {
         item.setTaggedUserName(dto.getTaggedUserName());
         item.setProposalJson(dto.getProposalJson());
         item.setProposalStatus(dto.getProposalStatus() != null ? dto.getProposalStatus() : "PENDING");
+        item.setImageUrl(dto.getImageUrl());
+        item.setAttachmentMimeType(dto.getAttachmentMimeType());
+        item.setAttachmentThumbnail(dto.getAttachmentThumbnail());
+        item.setSourceImageId(dto.getSourceImageId());
         item.setAiEngine(dto.getAiEngine() != null ? dto.getAiEngine() : "GEMINI_CLOUD");
         item.setResolvedByUserId(dto.getResolvedByUserId());
         item.setResolvedByUserName(dto.getResolvedByUserName());
@@ -129,6 +133,10 @@ public class DiagramChatService {
                 .messageType(item.getMessageType())
                 .content(item.getContent())
                 .taggedUserName(item.getTaggedUserName())
+                .imageUrl(item.getImageUrl())
+                .attachmentMimeType(item.getAttachmentMimeType())
+                .attachmentThumbnail(item.getAttachmentThumbnail())
+                .sourceImageId(item.getSourceImageId())
                 .proposalJson(item.getProposalJson())
                 .proposalStatus(item.getProposalStatus())
                 .aiEngine(item.getAiEngine())

@@ -43,6 +43,9 @@ services:
       AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
       SPRING_JPA_HIBERNATE_DDL_AUTO: update
       SPRING_JPA_SHOW_SQL: "false"
+      DIAGRAM_UPLOAD_DIR: /app/uploads/diagrams
+    volumes:
+      - uploads_data:/app/uploads
     networks:
       - diag_network
 
@@ -88,3 +91,6 @@ networks:
 volumes:
   postgres_data:
     driver: local
+  uploads_data:
+    driver: local
+

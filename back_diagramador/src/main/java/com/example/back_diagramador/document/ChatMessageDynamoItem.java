@@ -21,6 +21,11 @@ public class ChatMessageDynamoItem {
     private String content;
     private String taggedUserName;
 
+    private String imageUrl;
+    private String attachmentMimeType;
+    private String attachmentThumbnail;
+    private String sourceImageId;
+
     // Propuesta de mutación serializada en JSON
     private String proposalJson;
     private String proposalStatus; // "PENDING", "ACCEPTED", "IGNORED", "EXPIRED"
@@ -199,5 +204,41 @@ public class ChatMessageDynamoItem {
 
     public void setErrorMessage(String errorMessage) {
         this.errorMessage = errorMessage;
+    }
+
+    @DynamoDbAttribute("imageUrl")
+    public String getImageUrl() {
+        return imageUrl;
+    }
+
+    public void setImageUrl(String imageUrl) {
+        this.imageUrl = imageUrl;
+    }
+
+    @DynamoDbAttribute("attachmentMimeType")
+    public String getAttachmentMimeType() {
+        return attachmentMimeType;
+    }
+
+    public void setAttachmentMimeType(String attachmentMimeType) {
+        this.attachmentMimeType = attachmentMimeType;
+    }
+
+    @DynamoDbAttribute("attachmentThumbnail")
+    public String getAttachmentThumbnail() {
+        return attachmentThumbnail;
+    }
+
+    public void setAttachmentThumbnail(String attachmentThumbnail) {
+        this.attachmentThumbnail = attachmentThumbnail;
+    }
+
+    @DynamoDbAttribute("sourceImageId")
+    public String getSourceImageId() {
+        return sourceImageId;
+    }
+
+    public void setSourceImageId(String sourceImageId) {
+        this.sourceImageId = sourceImageId;
     }
 }
